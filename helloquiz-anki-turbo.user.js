@@ -1,12 +1,10 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.2.0
+// @version      1.2.1
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
-// @match        https://helloquiz.app/quiz/*?learn
-// @match        https://helloquiz.app/learn
-// @match        https://helloquiz.app/learn?*
+// @match        https://helloquiz.app/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=helloquiz.app
 // @updateURL    https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js
 // @downloadURL  https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js
@@ -423,10 +421,10 @@
 
   // ---------- Anki-page detection ----------
 
-  // @match only controls where the script LOADS. With SPA navigation the
-  // script keeps running when moving to non-anki pages (e.g. a normal
-  // quiz at /quiz/<id> without ?learn), so every feature must also check
-  // at runtime whether we're on an anki page.
+  // The script loads on the whole site (@match https://helloquiz.app/*) so
+  // that SPA navigation INTO an anki page (e.g. from the landing page) is
+  // caught even when the first page load wasn't an anki page. Every feature
+  // therefore checks at runtime whether we're actually on an anki page.
 
   function isAnkiPage() {
     if (location.pathname === '/learn') return true;
@@ -743,7 +741,7 @@
   // renders, so hooking it lets us hide/reset with zero visible flash.
 
   let lastUrl = location.href;
-  let scriptActive = true;
+  let scriptActive = isAnkiPage(); // may load on any page (SPA); start inactive off-anki
 
   function setActive(active) {
     if (active === scriptActive) return;
