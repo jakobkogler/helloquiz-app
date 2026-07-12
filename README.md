@@ -5,13 +5,13 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 ## Features
 
 - **Per-question countdown** — a thin timer bar counts down from a configurable number of seconds. When it runs out, the card is automatically graded as failed ("again"), so slowly scanning the map for the right city/region gets penalized automatically.
-- **Review pause after mistakes** — when you answer wrong (or time out), the quiz pauses on the current card so you can study and learn it before moving on.
+- **Review pause after mistakes** — when you answer wrong (or time out), the quiz pauses on the current card so you can study and learn it before moving on. Toggle it with the **pause after mistakes** checkbox in the control panel.
 - **Keyboard shortcuts** with visible `kbd` badges:
   - `1`–`4` — grade the current card (again / hard / good / easy), or open quiz rows 1–4 on the `/learn` list.
   - `1` / `2` / `3` — end-of-quiz navigation: practice more (`▶`) / select quiz (`⇋`) / next quiz (`→`).
   - `Esc` — jump back to the `/learn` (anki mode) list.
 - **Auto pause/resume** — the countdown pauses when you switch tabs or the window loses focus, and resumes where it left off when you come back.
-- **Control panel** — a small overlay (top-right) to set the timer duration and toggle the timer on/off. Both are remembered across sessions.
+- **Control panel** — a small *Turbo Script Config* overlay (top-right) to set the timer duration, enable/disable the timer, and toggle the review pause. All settings are remembered across sessions.
 
 ## Installation
 

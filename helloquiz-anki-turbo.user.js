@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.0.1
+// @version      1.1.1
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/quiz/*?learn
@@ -45,6 +45,7 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         seconds: TIMER_SECONDS,
         running: running,
+        reviewPause: reviewPause,
       }));
     } catch (e) { /* storage unavailable - not critical */ }
   }
@@ -52,6 +53,9 @@
   const saved = loadSettings();
   let TIMER_SECONDS = typeof saved.seconds === 'number' && saved.seconds > 0 ? saved.seconds : 10;
   let running = typeof saved.running === 'boolean' ? saved.running : true;
+  // When true, pause after a wrong answer/timeout so you can study the map
+  // before continuing. When false, jump straight to the next question.
+  let reviewPause = typeof saved.reviewPause === 'boolean' ? saved.reviewPause : true;
 
   // ---------- State ----------
 
@@ -688,7 +692,7 @@
       // next question renders.
       buttonsWerePresent = !!findAgainButton();
 
-      if (running && pendingReview) {
+      if (running && reviewPause && pendingReview) {
         // Review pending: show the continue button and do NOT update the
         // mirror - it keeps showing the previous (answered) question.
         const quizContainer = findQuizContainer() || container;
@@ -967,21 +971,42 @@
       padding: 8px 10px;
       border-radius: 8px;
       display: flex;
-      align-items: center;
-      gap: 8px;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.3);
       user-select: none;
     `;
 
-    const label = document.createElement('label');
-    label.textContent = 'timer (s):';
-    label.style.cssText = 'display:flex; align-items:center; gap:4px;';
+    const title = document.createElement('div');
+    title.textContent = 'Turbo Script Config';
+    title.style.cssText = 'font-weight:600; margin-bottom:2px;';
+
+    // Row: timer on/off + duration, side by side. The seconds input is
+    // disabled while the timer is off.
+    const timerRow = document.createElement('div');
+    timerRow.style.cssText = 'display:flex; align-items:center; gap:6px;';
+
+    const enabledLabel = document.createElement('label');
+    enabledLabel.style.cssText = 'display:flex; align-items:center; gap:6px; cursor:pointer;';
+    enabledLabel.title = 'When on, each question is timed and running out auto-grades the card "again". When off, no countdown runs.';
+
+    const enabledCheckbox = document.createElement('input');
+    enabledCheckbox.type = 'checkbox';
+    enabledCheckbox.checked = running;
+    enabledCheckbox.style.cssText = 'margin:0; cursor:pointer;';
+
+    const enabledText = document.createElement('span');
+    enabledText.textContent = 'timer';
+    enabledLabel.appendChild(enabledCheckbox);
+    enabledLabel.appendChild(enabledText);
 
     const input = document.createElement('input');
     input.type = 'number';
     input.min = '1';
     input.step = '1';
     input.value = String(TIMER_SECONDS);
+    input.disabled = !running;
     input.style.cssText = `
       width: 48px;
       padding: 2px 4px;
@@ -990,6 +1015,7 @@
       background: #222;
       color: #fff;
     `;
+    input.style.opacity = running ? '1' : '0.5';
     input.addEventListener('change', () => {
       const val = parseFloat(input.value);
       if (!isNaN(val) && val > 0) {
@@ -1002,23 +1028,14 @@
       }
     });
 
-    const toggleBtn = document.createElement('button');
-    toggleBtn.textContent = running ? 'disable' : 'enable';
-    toggleBtn.style.cssText = `
-      padding: 3px 10px;
-      border-radius: 4px;
-      border: none;
-      cursor: pointer;
-      font-weight: 600;
-      background: ${running ? '#c0392b' : '#27ae60'};
-      color: #fff;
-    `;
-    toggleBtn.addEventListener('click', () => {
-      running = !running;
-      saveSettings();
-      toggleBtn.textContent = running ? 'disable' : 'enable';
-      toggleBtn.style.background = running ? '#c0392b' : '#27ae60';
+    const secSuffix = document.createElement('span');
+    secSuffix.textContent = 's';
 
+    enabledCheckbox.addEventListener('change', () => {
+      running = enabledCheckbox.checked;
+      saveSettings();
+      input.disabled = !running;
+      input.style.opacity = running ? '1' : '0.5';
       const container = findMapContainer();
       if (running) {
         if (container) startTimer(container);
@@ -1029,10 +1046,36 @@
       }
     });
 
+    timerRow.appendChild(enabledLabel);
+    timerRow.appendChild(input);
+    timerRow.appendChild(secSuffix);
 
-    label.appendChild(input);
-    panel.appendChild(label);
-    panel.appendChild(toggleBtn);
+    // Row: pause after a wrong answer (review) vs. jump straight to the next
+    // question.
+    const pauseLabel = document.createElement('label');
+    pauseLabel.style.cssText = 'display:flex; align-items:center; gap:6px; cursor:pointer;';
+    pauseLabel.title = 'When on, the quiz pauses after a wrong answer (or timeout) so you can study the map — click the map or press 1 to continue. When off, it jumps straight to the next question.';
+
+    const pauseCheckbox = document.createElement('input');
+    pauseCheckbox.type = 'checkbox';
+    pauseCheckbox.checked = reviewPause;
+    pauseCheckbox.style.cssText = 'margin:0; cursor:pointer;';
+    pauseCheckbox.addEventListener('change', () => {
+      reviewPause = pauseCheckbox.checked;
+      saveSettings();
+      // If the pause is switched off while a review overlay is up, continue
+      // immediately instead of leaving the user stuck on it.
+      if (!reviewPause && overlayEl) proceedFromOverlay();
+    });
+
+    const pauseText = document.createElement('span');
+    pauseText.textContent = 'pause after mistakes';
+    pauseLabel.appendChild(pauseCheckbox);
+    pauseLabel.appendChild(pauseText);
+
+    panel.appendChild(title);
+    panel.appendChild(timerRow);
+    panel.appendChild(pauseLabel);
     document.body.appendChild(panel);
     panelEl = panel;
   }
