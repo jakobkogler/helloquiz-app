@@ -66,6 +66,9 @@
   let buttonsWerePresent = false;
   let pendingReview = true; // start paused: first question waits for a click
   let overlayEl = null;
+  let navPausePending = false;      // paused before revealing end-of-quiz nav buttons
+  let navButtonsWerePresent = false;
+  let navPauseArmed = false;        // a fresh press began during the pause (a real continue)
 
   // Timer bookkeeping for pause/resume on tab switch
   let timerDeadline = 0;      // Date.now() when timer would expire
@@ -251,6 +254,7 @@
   const MIRROR_CLASS = 'hq-timer-mirror';
   const KBD_CLASS = 'hq-timer-kbd'; // must be declared before installHideStyle() runs at document-start
   const NAVSYM_CLASS = 'hq-timer-navsym'; // wraps the ▶/⇋/→ glyph so we can hide it via CSS
+  const NAV_HIDE_CLASS = 'hq-nav-hide';   // hides end-of-quiz nav buttons during the pause
   const MIRROR_ACTIVE_CLASS = 'hq-timer-mirror-active';
   let mirrorActive = false;
 
@@ -315,6 +319,7 @@
         // the next question, the mirror updates in the same frame.
         watchForQuizChange();
         watchForNewQuestion();
+        watchForNavButtons();
       } finally {
         observerBusy = false;
       }
@@ -378,6 +383,12 @@
       }
       span.${NAVSYM_CLASS} {
         display: none !important;
+      }
+      /* Hide the end-of-quiz nav buttons while the after-a-wrong-last-answer
+         pause is active (kept in layout via visibility so revealing them
+         doesn't shift anything). */
+      html.${NAV_HIDE_CLASS} [class*="controlButtonsAnki"] {
+        visibility: hidden !important;
       }
     `;
     // Prefer <head> when it exists (more stable across hydration);
@@ -458,11 +469,111 @@
   }
 
   function proceedFromOverlay() {
+    const wasNavPause = navPausePending;
     hideReviewOverlay();
     pendingReview = false;
+    if (wasNavPause) {
+      // End-of-quiz pause: just reveal the nav buttons, no timer to start.
+      endNavPause();
+      return;
+    }
     setMirrorToCurrentQuestion();
     const container = findMapContainer();
     if (container) startTimer(container);
+  }
+
+  // ---------- Pause before the end-of-quiz buttons (wrong last answer) ----------
+
+  // When the last question of a quiz is answered wrong while pause mode is on,
+  // the site jumps straight to the nav buttons (practice more / select / next
+  // quiz) with no next question for the normal pause to attach to. Hide those
+  // buttons and wait for a click first, so the final mistake gets a review
+  // pause too. Continuing reuses the same map-tap / key-1 / click machinery.
+
+  function anyNavButtonPresent() {
+    return NAV_BUTTONS.some(({ symbol }) => findNavButtonBySymbol(symbol));
+  }
+
+  function showNavPauseMessage() {
+    if (document.querySelector('.hq-nav-msg')) return;
+    const msg = document.createElement('div');
+    msg.className = 'hq-nav-msg';
+    msg.textContent = 'Review the map, then click to continue';
+    msg.style.cssText = `
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 100001;
+      background: rgba(30, 30, 30, 0.9);
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      font-size: 14px;
+      padding: 8px 14px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      cursor: pointer;
+      user-select: none;
+    `;
+    document.body.appendChild(msg);
+  }
+
+  function removeNavPauseMessage() {
+    document.querySelectorAll('.hq-nav-msg').forEach((el) => el.remove());
+  }
+
+  function startNavPause() {
+    navPausePending = true;
+    navPauseArmed = false;
+    document.documentElement.classList.add(NAV_HIDE_CLASS);
+    // Reuse the overlay marker so the map-tap / key-1 continue handlers fire.
+    overlayEl = document.createElement('span');
+    showNavPauseMessage();
+    if (DEBUG) console.log('[helloquiz-timer] nav pause: hiding end-of-quiz buttons until click');
+  }
+
+  function endNavPause() {
+    navPausePending = false;
+    navPauseArmed = false;
+    document.documentElement.classList.remove(NAV_HIDE_CLASS);
+    removeNavPauseMessage();
+  }
+
+  // A press that BEGINS during the pause is a genuine continue gesture. The
+  // tap that answered the last question started before the pause, so it never
+  // arms — which is how we ignore its trailing click without any timers.
+  function onNavPausePointerDown() {
+    if (navPausePending) navPauseArmed = true;
+  }
+
+  // The first armed click ANYWHERE reveals the buttons. Registered before the
+  // other click handlers and swallowed so it doesn't also activate whatever is
+  // underneath. Covers the case where the end-of-quiz screen has no map to tap.
+  function onNavPauseClick(e) {
+    if (!scriptActive || !navPausePending || !navPauseArmed) return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    if (DEBUG) console.log('[helloquiz-timer] nav pause: click -> reveal buttons');
+    proceedFromOverlay();
+  }
+
+  function watchForNavButtons() {
+    const present = anyNavButtonPresent();
+    if (present) {
+      if (!navButtonsWerePresent && running && reviewPause && pendingReview) {
+        startNavPause();
+      }
+      // Keep the pause enforced across React re-renders.
+      if (navPausePending) {
+        document.documentElement.classList.add(NAV_HIDE_CLASS);
+        showNavPauseMessage();
+      }
+    } else if (navPausePending) {
+      // Buttons vanished before continuing (e.g. quiz changed) — clean up.
+      hideReviewOverlay();
+      endNavPause();
+    }
+    navButtonsWerePresent = present;
   }
 
   // ---------- Map interaction during review ----------
@@ -589,6 +700,8 @@
     if (DEBUG) console.log('[helloquiz-timer] full reset (' + reason + ')');
     clearTimer();
     hideReviewOverlay();
+    endNavPause();
+    navButtonsWerePresent = false;
     timedOut = false;
     buttonsWerePresent = false;
     // Drop stale bar references so a fresh one gets created in the new DOM
@@ -644,6 +757,8 @@
       // Leaving anki mode: undo everything so normal pages are untouched.
       clearTimer();
       hideReviewOverlay(); // also reveals the question
+      endNavPause();
+      navButtonsWerePresent = false;
       pendingReview = false;
       timedOut = false;
       showQuestion();
@@ -1095,8 +1210,10 @@
     installConsoleHook();
     installMirrorObserver();
     installHistoryHook();
+    document.addEventListener('click', onNavPauseClick, true);
     document.addEventListener('click', onPossibleNavClick, true);
     document.addEventListener('click', onReviewMapClickBlock, true);
+    document.addEventListener('pointerdown', onNavPausePointerDown, true);
     document.addEventListener('pointerdown', onReviewPointerDown, true);
     document.addEventListener('pointerup', onReviewPointerUp, true);
     document.addEventListener('keydown', onOverlayKeydown, true);
@@ -1122,6 +1239,7 @@
       watchForQuizChange();
       watchForNewQuestion();
       watchForGradingButtons();
+      watchForNavButtons();
     }, 200);
   }
 
