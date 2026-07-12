@@ -187,7 +187,10 @@
     }
 
     if (!running) {
+      // No countdown, but the question is now active — highlight it the same
+      // way the timer does, so pause mode looks identical to timing mode.
       resetBarIdle();
+      setMirrorActive(true);
       return;
     }
 
@@ -560,7 +563,7 @@
   function watchForNavButtons() {
     const present = anyNavButtonPresent();
     if (present) {
-      if (!navButtonsWerePresent && running && reviewPause && pendingReview) {
+      if (!navButtonsWerePresent && reviewPause && pendingReview) {
         startNavPause();
       }
       // Keep the pause enforced across React re-renders.
@@ -799,6 +802,11 @@
     const qEl = findQuestionEl();
     const container = findMapContainer();
     if (!qEl || !container) return;
+    // On the end-of-quiz screen the nav buttons are shown instead of a live
+    // question; don't treat it as a new question, which would clear the
+    // pending review and prevent the end-of-quiz pause from triggering (this
+    // matters when the timer is off and the else-branch below runs).
+    if (anyNavButtonPresent()) return;
 
     if (qEl.textContent !== currentQuestionText) {
       currentQuestionText = qEl.textContent;
@@ -807,9 +815,10 @@
       // next question renders.
       buttonsWerePresent = !!findAgainButton();
 
-      if (running && reviewPause && pendingReview) {
+      if (reviewPause && pendingReview) {
         // Review pending: show the continue button and do NOT update the
         // mirror - it keeps showing the previous (answered) question.
+        // Independent of the timer: the pause works even with the timer off.
         const quizContainer = findQuizContainer() || container;
         showReviewOverlay(quizContainer);
       } else {
