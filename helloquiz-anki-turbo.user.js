@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.0.0
+// @version      1.0.1
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/quiz/*?learn
@@ -550,6 +550,15 @@
       if (s === 'correct') {
         if (DEBUG) console.debug('[helloquiz-timer] correct answer detected');
         clearTimer();
+        // "Force correct click" mode keeps you on the same card after a
+        // wrong click (logging "incorrect", which set pendingReview) and
+        // finally logs "correct" once you click the right answer — without
+        // ever showing grading buttons. Clicking the correct answer already
+        // served as the review, so clear pendingReview to let the next card
+        // start immediately instead of forcing a redundant continue-click.
+        // (For a timeout, watchForGradingButtons re-sets pendingReview
+        // afterwards, so that pause is unaffected.)
+        pendingReview = false;
         return;
       }
     }
