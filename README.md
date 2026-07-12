@@ -5,13 +5,13 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 ## Features
 
 - **Per-question countdown** — a thin timer bar counts down from a configurable number of seconds. When it runs out, the card is automatically graded as failed ("again"), so slowly scanning the map for the right city/region gets penalized automatically.
-- **Review pause after mistakes** — when you answer wrong (or time out), the quiz pauses on the current card so you can study and learn it before moving on. Toggle it with the **pause after mistakes** checkbox in the control panel.
-- **Keyboard shortcuts** with visible `kbd` badges:
-  - `1`–`4` — grade the current card (again / hard / good / easy), or open quiz rows 1–4 on the `/learn` list.
-  - `1` / `2` / `3` — end-of-quiz navigation: practice more (`▶`) / select quiz (`⇋`) / next quiz (`→`).
-  - `Esc` — jump back to the `/learn` (anki mode) list.
+- **Review pause after mistakes** — when you answer wrong (or time out), the quiz pauses on the current card so you can study and learn it before moving on.
+- **Settings** — the quiz's settings panel is extended, so that you can enable/disable the countdown timer, set the timer duration, and enable/disable the review pause. All settings are remembered across sessions.
+- **Keyboard shortcuts** with matching on-screen key badges:
+  - <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> — grade the current card (again / hard / good / easy), or open quiz rows 1–4 on the `/learn` list.
+  - <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> — end-of-quiz navigation: practice more (`▶`) / select quiz (`⇋`) / next quiz (`→`).
+  - <kbd>Esc</kbd> — jump back to the `/learn` (anki mode) list.
 - **Auto pause/resume** — the countdown pauses when you switch tabs or the window loses focus, and resumes where it left off when you come back.
-- **Settings** — an *Anki Turbo Config* section added to the bottom of the quiz's own settings panel, to set the timer duration, enable/disable the timer, and toggle the review pause. All settings are remembered across sessions.
 
 ## Installation
 
@@ -23,14 +23,14 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 
 ## Screenshots
 
-The countdown bar across the top and the adjustable-timer control panel in the corner:
+The countdown bar across the top, and the *Anki Turbo Config* options in the quiz's settings panel:
 
-![The countdown timer bar and the adjustable-timer control panel](screenshots/adjustable-timer.png)
+![The countdown timer bar and the Anki Turbo Config settings](screenshots/config-timer.png)
 
 Keyboard-shortcut badges and labels on the buttons:
 
 ![Keyboard shortcut hints on the quiz buttons](screenshots/keyboard-shortcuts.png)
 
-The review pause after a wrong answer, so you can study the card you just missed:
+The review pause after a wrong answer, so you can study the map you just missed — it works even on city quizzes:
 
 ![The review pause after a mistake](screenshots/pause.png)
