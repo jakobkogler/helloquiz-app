@@ -11,7 +11,7 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
   - `1` / `2` / `3` — end-of-quiz navigation: practice more (`▶`) / select quiz (`⇋`) / next quiz (`→`).
   - `Esc` — jump back to the `/learn` (anki mode) list.
 - **Auto pause/resume** — the countdown pauses when you switch tabs or the window loses focus, and resumes where it left off when you come back.
-- **Control panel** — a small *Turbo Script Config* overlay (top-right) to set the timer duration, enable/disable the timer, and toggle the review pause. All settings are remembered across sessions.
+- **Settings** — an *Anki Turbo Config* section added to the bottom of the quiz's own settings panel, to set the timer duration, enable/disable the timer, and toggle the review pause. All settings are remembered across sessions.
 
 ## Installation
 

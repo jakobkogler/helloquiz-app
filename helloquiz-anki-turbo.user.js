@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.1.1
+// @version      1.2.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/quiz/*?learn
@@ -66,7 +66,6 @@
   let buttonsWerePresent = false;
   let pendingReview = true; // start paused: first question waits for a click
   let overlayEl = null;
-  let panelEl = null;
 
   // Timer bookkeeping for pause/resume on tab switch
   let timerDeadline = 0;      // Date.now() when timer would expire
@@ -309,6 +308,8 @@
         ensureMirror();
         ensureListKbdHints();
         ensureNavKbdHints();
+        ensureSettingsPanel();
+        updateForceClickWarning();
         // Also detect quiz/question changes right here (pre-paint) instead
         // of waiting for the 200ms poll: when a grading button swaps in
         // the next question, the mirror updates in the same frame.
@@ -634,8 +635,7 @@
     if (DEBUG) console.log('[helloquiz-timer] ' + (active ? 'activating' : 'deactivating') + ' on', location.pathname + location.search);
 
     if (active) {
-      // Returning to an anki page: show panel, start in the waiting state.
-      if (panelEl) panelEl.style.display = 'flex';
+      // Returning to an anki page: start in the waiting state.
       hideQuestion();
       mirrorText = 'Click to start';
       markPendingReview('entered anki page');
@@ -649,12 +649,12 @@
       showQuestion();
       removeMirror();
       removeListKbdHints();
+      removeSettingsPanel();
       if (timerBarWrap && timerBarWrap.parentNode) {
         timerBarWrap.parentNode.removeChild(timerBarWrap);
       }
       timerBar = null;
       timerBarWrap = null;
-      if (panelEl) panelEl.style.display = 'none';
     }
   }
 
@@ -955,90 +955,96 @@
     else location.assign('https://helloquiz.app/learn');
   }
 
-  // ---------- Control panel ----------
+  // ---------- Config UI (injected into the site's settings panel) ----------
 
-  function makeControlPanel() {
-    const panel = document.createElement('div');
-    panel.style.cssText = `
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      z-index: 100000;
-      background: rgba(30, 30, 30, 0.85);
-      color: #fff;
-      font-family: system-ui, sans-serif;
-      font-size: 13px;
-      padding: 8px 10px;
-      border-radius: 8px;
-      display: flex;
-      flex-direction: column;
-      align-items: stretch;
-      gap: 6px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-      user-select: none;
-    `;
+  const SETTINGS_BLOCK_CLASS = 'hq-timer-settings-block';
+  const FORCECLICK_WARNING_CLASS = 'hq-timer-forceclick-warning';
 
-    const title = document.createElement('div');
-    title.textContent = 'Turbo Script Config';
-    title.style.cssText = 'font-weight:600; margin-bottom:2px;';
+  function findSiteSettingsContainer() {
+    return document.querySelector('[class*="anki-settings-module"]');
+  }
 
-    // Row: timer on/off + duration, side by side. The seconds input is
-    // disabled while the timer is off.
-    const timerRow = document.createElement('div');
-    timerRow.style.cssText = 'display:flex; align-items:center; gap:6px;';
+  // Show a warning while the site's "force correct click" and our pause mode
+  // are both on — that combination is currently broken for city quizzes.
+  function updateForceClickWarning() {
+    const warning = document.querySelector('.' + FORCECLICK_WARNING_CLASS);
+    if (!warning) return;
+    const forceCb = document.getElementById('forceClick');
+    const forceOn = !!(forceCb && forceCb.checked);
+    warning.style.display = (forceOn && reviewPause) ? 'block' : 'none';
+  }
+
+  function removeSettingsPanel() {
+    document.querySelectorAll('.' + SETTINGS_BLOCK_CLASS).forEach((el) => el.remove());
+  }
+
+  // Add our options to the bottom of the site's own anki settings panel, so
+  // they inherit the site's styling. Rebuilt whenever the settings panel is
+  // (re-)rendered; the module-level state variables are the source of truth
+  // for the control values, so a rebuild always reflects the current config.
+  function ensureSettingsPanel() {
+    const container = findSiteSettingsContainer();
+    if (!container) return;
+    if (container.querySelector('.' + SETTINGS_BLOCK_CLASS)) return;
+
+    const block = document.createElement('div');
+    block.className = SETTINGS_BLOCK_CLASS;
+
+    // Separator from the site's own settings above. Inline styles because
+    // the site's CSS resets <hr> to no border (renders as an invisible
+    // 0-height line otherwise).
+    const separator = document.createElement('hr');
+    separator.style.cssText = 'border: none; border-top: 1px solid currentColor; opacity: 0.3; margin: 10px 0;';
+
+    // Heading with a link to the script's repo
+    const heading = document.createElement('p');
+    const strong = document.createElement('strong');
+    strong.textContent = 'Anki Turbo Config';
+    heading.appendChild(strong);
+    heading.appendChild(document.createTextNode(' '));
+    const repoLink = document.createElement('a');
+    repoLink.href = 'https://github.com/jakobkogler/helloquiz-app';
+    repoLink.target = '_blank';
+    repoLink.rel = 'noopener';
+    repoLink.textContent = '(GitHub)';
+    heading.appendChild(repoLink);
+
+    // Timer on/off + duration (the seconds input greys out while off)
+    const timerP = document.createElement('p');
 
     const enabledLabel = document.createElement('label');
-    enabledLabel.style.cssText = 'display:flex; align-items:center; gap:6px; cursor:pointer;';
-    enabledLabel.title = 'When on, each question is timed and running out auto-grades the card "again". When off, no countdown runs.';
-
     const enabledCheckbox = document.createElement('input');
     enabledCheckbox.type = 'checkbox';
     enabledCheckbox.checked = running;
-    enabledCheckbox.style.cssText = 'margin:0; cursor:pointer;';
-
-    const enabledText = document.createElement('span');
-    enabledText.textContent = 'timer';
     enabledLabel.appendChild(enabledCheckbox);
-    enabledLabel.appendChild(enabledText);
+    enabledLabel.appendChild(document.createTextNode(' timer countdown '));
 
-    const input = document.createElement('input');
-    input.type = 'number';
-    input.min = '1';
-    input.step = '1';
-    input.value = String(TIMER_SECONDS);
-    input.disabled = !running;
-    input.style.cssText = `
-      width: 48px;
-      padding: 2px 4px;
-      border-radius: 4px;
-      border: 1px solid #666;
-      background: #222;
-      color: #fff;
-    `;
-    input.style.opacity = running ? '1' : '0.5';
-    input.addEventListener('change', () => {
-      const val = parseFloat(input.value);
+    const secInput = document.createElement('input');
+    secInput.type = 'number';
+    secInput.min = '1';
+    secInput.step = '1';
+    secInput.value = String(TIMER_SECONDS);
+    secInput.disabled = !running;
+    secInput.style.width = '4em';
+    secInput.addEventListener('change', () => {
+      const val = parseFloat(secInput.value);
       if (!isNaN(val) && val > 0) {
         TIMER_SECONDS = val;
         saveSettings();
-        const container = findMapContainer();
-        if (container) startTimer(container);
+        const c = findMapContainer();
+        if (c) startTimer(c);
       } else {
-        input.value = String(TIMER_SECONDS);
+        secInput.value = String(TIMER_SECONDS);
       }
     });
-
-    const secSuffix = document.createElement('span');
-    secSuffix.textContent = 's';
 
     enabledCheckbox.addEventListener('change', () => {
       running = enabledCheckbox.checked;
       saveSettings();
-      input.disabled = !running;
-      input.style.opacity = running ? '1' : '0.5';
-      const container = findMapContainer();
+      secInput.disabled = !running;
+      const c = findMapContainer();
       if (running) {
-        if (container) startTimer(container);
+        if (c) startTimer(c);
       } else {
         clearTimer();
         timedOut = false;
@@ -1046,44 +1052,46 @@
       }
     });
 
-    timerRow.appendChild(enabledLabel);
-    timerRow.appendChild(input);
-    timerRow.appendChild(secSuffix);
+    timerP.appendChild(enabledLabel);
+    timerP.appendChild(secInput);
+    timerP.appendChild(document.createTextNode(' s'));
 
-    // Row: pause after a wrong answer (review) vs. jump straight to the next
-    // question.
+    // Pause after a wrong answer (review) vs. jump straight to the next one
+    const pauseP = document.createElement('p');
     const pauseLabel = document.createElement('label');
-    pauseLabel.style.cssText = 'display:flex; align-items:center; gap:6px; cursor:pointer;';
-    pauseLabel.title = 'When on, the quiz pauses after a wrong answer (or timeout) so you can study the map — click the map or press 1 to continue. When off, it jumps straight to the next question.';
-
     const pauseCheckbox = document.createElement('input');
     pauseCheckbox.type = 'checkbox';
     pauseCheckbox.checked = reviewPause;
-    pauseCheckbox.style.cssText = 'margin:0; cursor:pointer;';
     pauseCheckbox.addEventListener('change', () => {
       reviewPause = pauseCheckbox.checked;
       saveSettings();
       // If the pause is switched off while a review overlay is up, continue
       // immediately instead of leaving the user stuck on it.
       if (!reviewPause && overlayEl) proceedFromOverlay();
+      updateForceClickWarning();
     });
-
-    const pauseText = document.createElement('span');
-    pauseText.textContent = 'pause after mistakes';
     pauseLabel.appendChild(pauseCheckbox);
-    pauseLabel.appendChild(pauseText);
+    pauseLabel.appendChild(document.createTextNode(' pause after mistakes'));
+    pauseP.appendChild(pauseLabel);
 
-    panel.appendChild(title);
-    panel.appendChild(timerRow);
-    panel.appendChild(pauseLabel);
-    document.body.appendChild(panel);
-    panelEl = panel;
+    // Warning shown only when "force correct click" and pause mode are both on.
+    const warning = document.createElement('p');
+    warning.className = FORCECLICK_WARNING_CLASS;
+    warning.textContent = 'For city quizzes the "force correct click" mode is currently broken. Disable it if you want to use the "pause after mistakes" mode instead.';
+    warning.style.cssText = 'display:none; margin-top:6px; padding:6px 8px; border:1px solid #e0a800; border-radius:4px; background:rgba(255,193,7,0.15); font-size:0.9em;';
+
+    block.appendChild(separator);
+    block.appendChild(heading);
+    block.appendChild(timerP);
+    block.appendChild(pauseP);
+    block.appendChild(warning);
+    container.appendChild(block);
+    updateForceClickWarning();
   }
 
   // ---------- Init ----------
 
   function init() {
-    makeControlPanel();
     installConsoleHook();
     installMirrorObserver();
     installHistoryHook();
@@ -1104,13 +1112,10 @@
       setActive(isAnkiPage());
       if (!scriptActive) return;
 
-      // Watchdog: Next.js hydration or navigation can remove nodes we
-      // appended to <body>. Recreate the panel if it's gone.
-      if (!panelEl || !document.body.contains(panelEl)) {
-        makeControlPanel();
-      }
       ensureListKbdHints();
       ensureNavKbdHints();
+      ensureSettingsPanel();
+      updateForceClickWarning();
       ensureHideStyle();
       hideQuestion(); // re-assert the <html> class in case it was stripped
       ensureMirror();
