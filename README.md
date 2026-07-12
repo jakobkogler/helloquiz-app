@@ -19,6 +19,8 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 2. Install the script from its [raw URL](https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js) — most userscript managers will detect it and prompt to install. Alternatively, open `helloquiz-anki-turbo.user.js` and let the manager install it (or add it as a new script and paste the contents).
 3. Navigate to an [Anki-mode page on helloquiz.app](https://helloquiz.app/learn) — the script activates automatically.
 
+> **Note:** This currently works best with the app's **"force correct click"** setting **disabled**. With it enabled the review pause doesn't behave correctly (in particular on city quizzes), so leave it off for now.
+
 ## Screenshots
 
 The countdown bar across the top and the adjustable-timer control panel in the corner:
