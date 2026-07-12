@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.2.1
+// @version      1.2.2
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -981,13 +981,21 @@
     // And an Esc badge on the menu's "anki mode" link, since the Escape
     // key navigates there. Also shorten its text to just "anki" so the
     // badge + label stay centered on a single line in the menu.
+    const onLearnPage = location.pathname === '/learn';
     document.querySelectorAll('a[href="/learn"]').forEach((link) => {
       link.childNodes.forEach((node) => {
         if (node.nodeType === Node.TEXT_NODE && node.data.includes('anki mode')) {
           node.data = node.data.replace('anki mode', 'anki');
         }
       });
-      if (link.querySelector('kbd.' + KBD_CLASS)) return;
+      const existingKbd = link.querySelector('kbd.' + KBD_CLASS);
+      // On /learn the Esc shortcut has nowhere to go (you're already here),
+      // so don't show its badge — and drop it if we're arriving from a quiz.
+      if (onLearnPage) {
+        if (existingKbd) existingKbd.remove();
+        return;
+      }
+      if (existingKbd) return;
       const kbd = document.createElement('kbd');
       kbd.className = KBD_CLASS;
       kbd.textContent = 'Esc';
