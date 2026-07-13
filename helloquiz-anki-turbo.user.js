@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.2.2
+// @version      1.2.3
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -58,7 +58,7 @@
   // ---------- State ----------
 
   let timerBar, timerBarWrap, timerInterval, timeoutHandle;
-  let currentQuestionText = '';
+  let currentQuestionSig = '';
   let currentQuizTitle = '';
   let timedOut = false;
   let buttonsWerePresent = false;
@@ -272,9 +272,47 @@
   // the mirror can keep showing the OLD question (the one that was
   // answered) while the site's real label already contains the next one.
   let mirrorText = 'Click to start';
+  // Some quizzes ask about a picture: the question <h2> holds an <img> and has
+  // no text. When that's the case we mirror the rendered markup instead of a
+  // string; mirrorHTML is null for ordinary text questions.
+  let mirrorHTML = null;
 
   function findContentElForMirror() {
     return document.querySelector('.quiz-module__HPadfW__content');
+  }
+
+  // A question is an image question when its <h2> contains an <img>.
+  function questionHasImage(qEl) {
+    return !!(qEl && qEl.querySelector('img'));
+  }
+
+  // Stable key for "has the question changed?". Image questions have empty
+  // textContent, so two different ones look identical by text alone — fall
+  // back to the image URL so the change is still detected.
+  function questionSignature(qEl) {
+    if (!qEl) return '';
+    const img = qEl.querySelector('img');
+    if (img) return 'img:' + (img.getAttribute('src') || '');
+    return 'txt:' + qEl.textContent;
+  }
+
+  // Snapshot the current question into the mirror's state. We snapshot (rather
+  // than reference the live node) so the mirror can keep showing the answered
+  // question during a review pause while the site swaps in the next one.
+  function captureQuestionToMirror(qEl) {
+    if (questionHasImage(qEl)) {
+      mirrorHTML = qEl.innerHTML;
+    } else {
+      mirrorHTML = null;
+      mirrorText = qEl.textContent;
+    }
+  }
+
+  // Show a plain-text status in the mirror (e.g. "Click to start"), clearing
+  // any image markup left over from a previous image question.
+  function setMirrorMessage(text) {
+    mirrorText = text;
+    mirrorHTML = null;
   }
 
   function ensureMirror() {
@@ -288,7 +326,11 @@
       if (realH2) contentEl.insertBefore(mirror, realH2);
       else contentEl.insertBefore(mirror, contentEl.firstChild);
     }
-    if (mirror.textContent !== mirrorText) mirror.textContent = mirrorText;
+    if (mirrorHTML !== null) {
+      if (mirror.innerHTML !== mirrorHTML) mirror.innerHTML = mirrorHTML;
+    } else if (mirror.textContent !== mirrorText) {
+      mirror.textContent = mirrorText;
+    }
     mirror.classList.toggle(MIRROR_ACTIVE_CLASS, mirrorActive);
   }
 
@@ -330,7 +372,7 @@
 
   function setMirrorToCurrentQuestion() {
     const qEl = findQuestionEl();
-    if (qEl) mirrorText = qEl.textContent;
+    if (qEl) captureQuestionToMirror(qEl);
     ensureMirror();
   }
 
@@ -711,13 +753,13 @@
     }
     timerBar = null;
     timerBarWrap = null;
-    mirrorText = 'Click to start'; // previous quiz's question is irrelevant now
+    setMirrorMessage('Click to start'); // previous quiz's question is irrelevant now
     ensureMirror();
     // New quiz starts paused too: wait for a click before showing the
     // question and starting the timer.
     markPendingReview('quiz start');
     // Force question re-detection
-    currentQuestionText = '__forced_reset__' + Math.random();
+    currentQuestionSig = '__forced_reset__' + Math.random();
   }
 
   function watchForQuizChange() {
@@ -751,9 +793,9 @@
     if (active) {
       // Returning to an anki page: start in the waiting state.
       hideQuestion();
-      mirrorText = 'Click to start';
+      setMirrorMessage('Click to start');
       markPendingReview('entered anki page');
-      currentQuestionText = '__forced_reset__' + Math.random();
+      currentQuestionSig = '__forced_reset__' + Math.random();
     } else {
       // Leaving anki mode: undo everything so normal pages are untouched.
       clearTimer();
@@ -806,8 +848,9 @@
     // matters when the timer is off and the else-branch below runs).
     if (anyNavButtonPresent()) return;
 
-    if (qEl.textContent !== currentQuestionText) {
-      currentQuestionText = qEl.textContent;
+    const sig = questionSignature(qEl);
+    if (sig !== currentQuestionSig) {
+      currentQuestionSig = sig;
       // Don't assume no buttons are present - the previous question's
       // grading buttons can still be mid-fade-out in the DOM right as the
       // next question renders.
@@ -821,7 +864,7 @@
         showReviewOverlay(quizContainer);
       } else {
         pendingReview = false;
-        mirrorText = qEl.textContent;
+        captureQuestionToMirror(qEl);
         ensureMirror();
         startTimer(container);
       }
@@ -883,7 +926,7 @@
       } else {
         markPendingReview('nav');
       }
-      currentQuestionText = '__forced_reset__' + Math.random();
+      currentQuestionSig = '__forced_reset__' + Math.random();
       watchForNewQuestion();
     }, 250);
   }
