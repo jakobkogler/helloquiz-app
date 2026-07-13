@@ -1217,6 +1217,29 @@
     block.appendChild(warning);
     container.appendChild(block);
     updateForceClickWarning();
+    unclipSettingsAncestors(block);
+  }
+
+  // The site's settings panel (or a modal/scroll wrapper around it) is height-
+  // bounded with clipped overflow. Appending our block at the bottom can push
+  // it past that clip - on Safari especially, where the panel doesn't grow to
+  // fit content the way Chrome/Firefox do, so the bottom controls get cut off.
+  // Walk up from our block and let any clipping ancestor scroll instead of
+  // hiding the overflow, so the whole config block stays reachable.
+  function unclipSettingsAncestors(fromEl) {
+    let el = fromEl.parentElement;
+    // Bounded walk toward the document root; the clipping wrapper is always a
+    // near ancestor, and we never want to touch <body>/<html> scrolling.
+    for (let hops = 0; el && el !== document.body && hops < 12; hops++) {
+      const cs = getComputedStyle(el);
+      const clipsY = cs.overflowY === 'hidden' || cs.overflowY === 'clip';
+      // Only intervene when the element genuinely can't show its content -
+      // i.e. it clips vertically and its content is taller than its box.
+      if (clipsY && el.scrollHeight > el.clientHeight + 1) {
+        el.style.overflowY = 'auto';
+      }
+      el = el.parentElement;
+    }
   }
 
   // ---------- Init ----------
