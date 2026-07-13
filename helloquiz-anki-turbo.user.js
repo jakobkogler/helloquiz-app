@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.2.3
+// @version      1.3.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -44,6 +44,7 @@
         seconds: TIMER_SECONDS,
         running: running,
         reviewPause: reviewPause,
+        perQuizSeconds: perQuizSeconds,
       }));
     } catch (e) { /* storage unavailable - not critical */ }
   }
@@ -54,6 +55,10 @@
   // When true, pause after a wrong answer/timeout so you can study the map
   // before continuing. When false, jump straight to the next question.
   let reviewPause = typeof saved.reviewPause === 'boolean' ? saved.reviewPause : true;
+  // TIMER_SECONDS is the global default used everywhere. A quiz can override
+  // just its own duration: perQuizSeconds maps a quiz title to its seconds.
+  // Quizzes without an entry fall back to the global default.
+  let perQuizSeconds = (saved.perQuizSeconds && typeof saved.perQuizSeconds === 'object') ? saved.perQuizSeconds : {};
 
   // ---------- State ----------
 
@@ -71,6 +76,20 @@
   // Timer bookkeeping for pause/resume on tab switch
   let timerDeadline = 0;      // Date.now() when timer would expire
   let pausedRemaining = null; // seconds left when paused, or null if not paused
+  let timerFullSeconds = TIMER_SECONDS; // full duration of the current countdown (the progress-bar denominator); may differ from the global default when the quiz overrides it
+
+  // Does the given quiz title have its own duration override?
+  function hasQuizOverride(title) {
+    return !!title && Object.prototype.hasOwnProperty.call(perQuizSeconds, title) &&
+      typeof perQuizSeconds[title] === 'number' && perQuizSeconds[title] > 0;
+  }
+
+  // Seconds to use for the current quiz: its override if it has one, else the
+  // global default.
+  function effectiveSeconds() {
+    if (hasQuizOverride(currentQuizTitle)) return perQuizSeconds[currentQuizTitle];
+    return TIMER_SECONDS;
+  }
 
   // ---------- DOM finders ----------
 
@@ -155,9 +174,9 @@
 
     timerInterval = setInterval(() => {
       const remaining = Math.max(0, (timerDeadline - Date.now()) / 1000);
-      const pct = TIMER_SECONDS > 0 ? (remaining / TIMER_SECONDS) * 100 : 0;
+      const pct = timerFullSeconds > 0 ? (remaining / timerFullSeconds) * 100 : 0;
       timerBar.style.width = pct + '%';
-      if (remaining < TIMER_SECONDS * 0.3) {
+      if (remaining < timerFullSeconds * 0.3) {
         timerBar.style.background = 'crimson';
       }
       if (remaining <= 0) {
@@ -176,7 +195,7 @@
   }
 
   function startTimer(container) {
-    if (DEBUG) console.log('[helloquiz-timer] startTimer called, running =', running, 'seconds =', TIMER_SECONDS);
+    if (DEBUG) console.log('[helloquiz-timer] startTimer called, running =', running, 'seconds =', effectiveSeconds());
     clearTimer();
     timedOut = false;
 
@@ -194,7 +213,8 @@
 
     timerBar.style.width = '100%';
     timerBar.style.background = 'orange';
-    runCountdown(container, TIMER_SECONDS);
+    timerFullSeconds = effectiveSeconds();
+    runCountdown(container, timerFullSeconds);
   }
 
   // ---------- Pause/resume on tab switch or window blur ----------
@@ -1158,10 +1178,18 @@
   function ensureSettingsPanel() {
     const container = findSiteSettingsContainer();
     if (!container) return;
-    if (container.querySelector('.' + SETTINGS_BLOCK_CLASS)) return;
+    const existing = container.querySelector('.' + SETTINGS_BLOCK_CLASS);
+    if (existing) {
+      // Rebuild if the quiz changed since we built the panel, so the per-quiz
+      // override row tracks the current quiz (and appears once its title is
+      // known - the panel can be built a tick before the title is detected).
+      if (existing.dataset.hqQuiz === currentQuizTitle) return;
+      existing.remove();
+    }
 
     const block = document.createElement('div');
     block.className = SETTINGS_BLOCK_CLASS;
+    block.dataset.hqQuiz = currentQuizTitle;
 
     // Separator from the site's own settings above. Inline styles because
     // the site's CSS resets <hr> to no border (renders as an invisible
@@ -1182,7 +1210,18 @@
     repoLink.textContent = '(GitHub)';
     heading.appendChild(repoLink);
 
-    // Timer on/off + duration (the seconds input greys out while off)
+    // Restart the running countdown so a duration change takes effect at once.
+    const restartTimer = () => {
+      const c = findMapContainer();
+      if (running && c) startTimer(c);
+    };
+
+    // Set by the per-quiz row below (when a quiz is open) so the global on/off
+    // toggle can re-sync that row's enabled state.
+    let refreshQuizRow = null;
+
+    // Global timer on/off + default duration (the seconds input greys out
+    // while off). This duration applies to every quiz that has no override.
     const timerP = document.createElement('p');
 
     const enabledLabel = document.createElement('label');
@@ -1204,8 +1243,9 @@
       if (!isNaN(val) && val > 0) {
         TIMER_SECONDS = val;
         saveSettings();
-        const c = findMapContainer();
-        if (c) startTimer(c);
+        // Only restart when this default is what the current quiz actually
+        // uses; a quiz with its own override is unaffected by the default.
+        if (!hasQuizOverride(currentQuizTitle)) restartTimer();
       } else {
         secInput.value = String(TIMER_SECONDS);
       }
@@ -1215,6 +1255,8 @@
       running = enabledCheckbox.checked;
       saveSettings();
       secInput.disabled = !running;
+      // The quiz-specific override only makes sense while the countdown is on.
+      if (refreshQuizRow) refreshQuizRow();
       const c = findMapContainer();
       if (running) {
         if (c) startTimer(c);
@@ -1225,9 +1267,84 @@
       }
     });
 
+    const defaultNote = document.createElement('span');
+    defaultNote.textContent = ' (default for all quizzes)';
+    defaultNote.style.opacity = '0.6';
+
     timerP.appendChild(enabledLabel);
     timerP.appendChild(secInput);
     timerP.appendChild(document.createTextNode(' s'));
+    timerP.appendChild(defaultNote);
+
+    // Per-quiz override: only shown while a quiz is open. Ticking it gives the
+    // current quiz its own duration; unticking drops back to the global
+    // default above.
+    const quizP = document.createElement('p');
+    if (currentQuizTitle) {
+      const quizTitle = currentQuizTitle; // capture for the handlers below
+
+      const overrideLabel = document.createElement('label');
+      const overrideCheckbox = document.createElement('input');
+      overrideCheckbox.type = 'checkbox';
+      overrideCheckbox.checked = hasQuizOverride(quizTitle);
+      overrideLabel.appendChild(overrideCheckbox);
+      overrideLabel.appendChild(document.createTextNode(' quiz specific timer countdown '));
+
+      const quizSecInput = document.createElement('input');
+      quizSecInput.type = 'number';
+      quizSecInput.min = '1';
+      quizSecInput.step = '1';
+      quizSecInput.value = String(hasQuizOverride(quizTitle) ? perQuizSeconds[quizTitle] : TIMER_SECONDS);
+      quizSecInput.disabled = !overrideCheckbox.checked;
+      quizSecInput.style.width = '4em';
+
+      const overrideNote = document.createElement('span');
+      overrideNote.textContent = ' (override)';
+      overrideNote.style.opacity = '0.6';
+
+      const refreshRow = () => {
+        const on = hasQuizOverride(quizTitle);
+        overrideCheckbox.checked = on;
+        // Greyed out entirely when the global countdown is off - there's no
+        // timer to give a quiz-specific duration to.
+        overrideCheckbox.disabled = !running;
+        quizSecInput.disabled = !on || !running;
+        quizSecInput.value = String(on ? perQuizSeconds[quizTitle] : TIMER_SECONDS);
+      };
+      refreshQuizRow = refreshRow;
+
+      overrideCheckbox.addEventListener('change', () => {
+        if (overrideCheckbox.checked) {
+          // Seed the override from whatever the input currently shows (the
+          // global default), so enabling it doesn't change the duration until
+          // the user edits it.
+          const val = parseFloat(quizSecInput.value);
+          perQuizSeconds[quizTitle] = (!isNaN(val) && val > 0) ? val : TIMER_SECONDS;
+        } else {
+          delete perQuizSeconds[quizTitle];
+        }
+        saveSettings();
+        refreshRow();
+        restartTimer();
+      });
+
+      quizSecInput.addEventListener('change', () => {
+        const val = parseFloat(quizSecInput.value);
+        if (!isNaN(val) && val > 0) {
+          perQuizSeconds[quizTitle] = val;
+          saveSettings();
+          restartTimer();
+        } else {
+          quizSecInput.value = String(hasQuizOverride(quizTitle) ? perQuizSeconds[quizTitle] : TIMER_SECONDS);
+        }
+      });
+
+      quizP.appendChild(overrideLabel);
+      quizP.appendChild(quizSecInput);
+      quizP.appendChild(document.createTextNode(' s'));
+      quizP.appendChild(overrideNote);
+      refreshRow();
+    }
 
     // Pause after a wrong answer (review) vs. jump straight to the next one
     const pauseP = document.createElement('p');
@@ -1256,6 +1373,7 @@
     block.appendChild(separator);
     block.appendChild(heading);
     block.appendChild(timerP);
+    if (currentQuizTitle) block.appendChild(quizP);
     block.appendChild(pauseP);
     block.appendChild(warning);
     container.appendChild(block);
