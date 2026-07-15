@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.3.4
+// @version      1.3.5
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -373,7 +373,10 @@
     }
     if (mirrorHTML !== null) {
       if (mirror.innerHTML !== mirrorHTML) mirror.innerHTML = mirrorHTML;
-    } else if (mirror.textContent !== mirrorText) {
+    } else if (mirror.textContent !== mirrorText || mirror.firstElementChild) {
+      // The firstElementChild check catches leftover markup from an image
+      // question: its textContent is '' just like an empty message, so the
+      // text comparison alone would leave the <img> in place.
       mirror.textContent = mirrorText;
     }
     mirror.classList.toggle(MIRROR_ACTIVE_CLASS, mirrorActive);
