@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.3.0
+// @version      1.3.1
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -918,19 +918,18 @@
   function onPossibleNavClick(e) {
     if (!scriptActive) return;
     if (!isAnkiPage()) return;
-    let el = e.target;
-    let depth = 0;
-    let matched = null;
-    while (el && depth < 6) {
-      if (isNavButton(el)) {
-        matched = el;
-        break;
-      }
-      el = el.parentElement;
-      depth++;
-    }
-
-    if (!matched) return;
+    // Only match a click that actually landed inside a real <button>.
+    // Walking up arbitrary ancestors and checking their aggregated
+    // textContent (the old approach) is unreliable: textContent includes
+    // ALL descendant text, so a shared container up the tree (e.g. the
+    // map's parent) can "match" just because a nav button sits somewhere
+    // else in its subtree - still in the DOM mid-fade-out, or hidden via
+    // NAV_HIDE_CLASS - even though the click itself was nowhere near it.
+    // That caused spurious timer resets while just panning/zooming the map.
+    // closest('button') stops precisely at the nearest enclosing button, so
+    // an unrelated button elsewhere in the DOM can never be picked up here.
+    const matched = e.target.closest('button');
+    if (!matched || !isNavButton(matched)) return;
     if (DEBUG) console.log('[helloquiz-timer] nav button matched:', matched.textContent.trim());
 
     // "▶ practice more" continues in the same quiz you're already engaged
