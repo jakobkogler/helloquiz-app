@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.3.2
+// @version      1.3.3
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -109,19 +109,30 @@
     return document.querySelector('.quiz-module__HPadfW__titleText');
   }
 
+  // The container holding the anki grading buttons (again/hard/good/easy)
+  function findGradingContainer() {
+    return document.querySelector('.generic-quiz-module__m31QtG__controlButtonsAnki');
+  }
+
   function findAgainButton() {
-    const container = document.querySelector('.generic-quiz-module__m31QtG__controlButtonsAnki');
+    const container = findGradingContainer();
     if (!container) return null;
     return container.querySelector('button[title="1"]');
   }
 
   // ---------- Timer bar ----------
 
-  function makeTimerBar(container) {
-    // Remove any stale bar from a previous quiz's DOM first
+  function removeTimerBar() {
     if (timerBarWrap && timerBarWrap.parentNode) {
       timerBarWrap.parentNode.removeChild(timerBarWrap);
     }
+    timerBar = null;
+    timerBarWrap = null;
+  }
+
+  function makeTimerBar(container) {
+    // Remove any stale bar from a previous quiz's DOM first
+    removeTimerBar();
 
     const wrap = document.createElement('div');
     wrap.style.cssText = `
@@ -335,6 +346,14 @@
     mirrorHTML = null;
   }
 
+  // Replace whatever question the mirror shows with a plain status message
+  // (or nothing), drop the active highlight, and render immediately.
+  function resetMirror(text) {
+    setMirrorMessage(text);
+    setMirrorActive(false);
+    ensureMirror();
+  }
+
   function ensureMirror() {
     const contentEl = findContentElForMirror();
     if (!contentEl) return;
@@ -539,9 +558,7 @@
       // End-of-quiz pause: reveal the nav buttons. The last question is no
       // longer relevant on this screen, so stop mirroring it.
       endNavPause();
-      setMirrorMessage('');
-      setMirrorActive(false);
-      ensureMirror();
+      resetMirror('');
       return;
     }
     setMirrorToCurrentQuestion();
@@ -634,9 +651,7 @@
           // Buttons are visible straight away (no review pause needed,
           // e.g. the last answer was correct) - the last question is no
           // longer relevant on this screen, so stop mirroring it.
-          setMirrorMessage('');
-          setMirrorActive(false);
-          ensureMirror();
+          resetMirror('');
         }
       }
       // Keep the pause enforced across React re-renders.
@@ -772,6 +787,12 @@
 
   // ---------- Watchers ----------
 
+  // Invalidate the stored question signature so watchForNewQuestion treats
+  // whatever is on screen as a brand-new question on its next run.
+  function forceQuestionRedetect() {
+    currentQuestionSig = '__forced_reset__' + Math.random();
+  }
+
   function fullReset(reason) {
     if (DEBUG) console.log('[helloquiz-timer] full reset (' + reason + ')');
     clearTimer();
@@ -781,18 +802,12 @@
     timedOut = false;
     buttonsWerePresent = false;
     // Drop stale bar references so a fresh one gets created in the new DOM
-    if (timerBarWrap && timerBarWrap.parentNode) {
-      timerBarWrap.parentNode.removeChild(timerBarWrap);
-    }
-    timerBar = null;
-    timerBarWrap = null;
-    setMirrorMessage('Click to start'); // previous quiz's question is irrelevant now
-    ensureMirror();
+    removeTimerBar();
+    resetMirror('Click to start'); // previous quiz's question is irrelevant now
     // New quiz starts paused too: wait for a click before showing the
     // question and starting the timer.
     markPendingReview('quiz start');
-    // Force question re-detection
-    currentQuestionSig = '__forced_reset__' + Math.random();
+    forceQuestionRedetect();
   }
 
   function watchForQuizChange() {
@@ -826,9 +841,9 @@
     if (active) {
       // Returning to an anki page: start in the waiting state.
       hideQuestion();
-      setMirrorMessage('Click to start');
+      resetMirror('Click to start');
       markPendingReview('entered anki page');
-      currentQuestionSig = '__forced_reset__' + Math.random();
+      forceQuestionRedetect();
     } else {
       // Leaving anki mode: undo everything so normal pages are untouched.
       clearTimer();
@@ -841,11 +856,7 @@
       removeMirror();
       removeListKbdHints();
       removeSettingsPanel();
-      if (timerBarWrap && timerBarWrap.parentNode) {
-        timerBarWrap.parentNode.removeChild(timerBarWrap);
-      }
-      timerBar = null;
-      timerBarWrap = null;
+      removeTimerBar();
     }
   }
 
@@ -958,13 +969,22 @@
       } else {
         markPendingReview('nav');
       }
-      currentQuestionSig = '__forced_reset__' + Math.random();
+      forceQuestionRedetect();
       watchForNewQuestion();
     }, 250);
   }
 
 
   // ---------- Keyboard handlers ----------
+
+  // Shortcuts must stay inert while the user is typing in a form field
+  // (e.g. the timer-seconds inputs in the settings panel).
+  function isTypingInField() {
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!el.isContentEditable;
+  }
 
   function onOverlayKeydown(e) {
     if (!overlayEl) return;
@@ -977,6 +997,14 @@
 
   const QUIZ_LIST_KEY_INDEX = { '1': 0, '2': 1, '3': 2, '4': 3 };
   const KBD_COUNT = 4; // rows reachable via keys 1-4
+
+  // Insert a key badge (e.g. "1", "Esc") as the first child of el.
+  function prependKbd(el, label) {
+    const kbd = document.createElement('kbd');
+    kbd.className = KBD_CLASS;
+    kbd.textContent = label;
+    el.insertBefore(kbd, el.firstChild);
+  }
 
   function ensureListKbdHints() {
     const table = findQuizListTable();
@@ -992,10 +1020,7 @@
         } else {
           const td = row.querySelector('td');
           if (!td) return;
-          const kbd = document.createElement('kbd');
-          kbd.className = KBD_CLASS;
-          kbd.textContent = label;
-          td.insertBefore(kbd, td.firstChild);
+          prependKbd(td, label);
         }
       } else if (existing) {
         existing.remove();
@@ -1016,10 +1041,7 @@
       const btn = findNavButtonBySymbol(symbol);
       if (!btn) return;
       if (!btn.querySelector('kbd.' + KBD_CLASS)) {
-        const kbd = document.createElement('kbd');
-        kbd.className = KBD_CLASS;
-        kbd.textContent = key;
-        btn.insertBefore(kbd, btn.firstChild);
+        prependKbd(btn, key);
       }
       // Wrap the bare symbol glyph (e.g. "▶") in a span so CSS can hide it,
       // leaving only the text label visible. The glyph stays in the DOM
@@ -1040,16 +1062,13 @@
 
     // And on the grading buttons (again/hard/good/easy), whose keyboard
     // shortcuts match their title attributes 1-4.
-    const gradeContainer = document.querySelector('.generic-quiz-module__m31QtG__controlButtonsAnki');
+    const gradeContainer = findGradingContainer();
     if (gradeContainer) {
       ['1', '2', '3', '4'].forEach((key) => {
         const btn = gradeContainer.querySelector('button[title="' + key + '"]');
         if (!btn) return;
         if (btn.querySelector('kbd.' + KBD_CLASS)) return;
-        const kbd = document.createElement('kbd');
-        kbd.className = KBD_CLASS;
-        kbd.textContent = key;
-        btn.insertBefore(kbd, btn.firstChild);
+        prependKbd(btn, key);
       });
     }
 
@@ -1071,10 +1090,7 @@
         return;
       }
       if (existingKbd) return;
-      const kbd = document.createElement('kbd');
-      kbd.className = KBD_CLASS;
-      kbd.textContent = 'Esc';
-      link.insertBefore(kbd, link.firstChild);
+      prependKbd(link, 'Esc');
     });
   }
 
@@ -1098,8 +1114,7 @@
     const index = QUIZ_LIST_KEY_INDEX[e.key];
     if (index === undefined) return;
     if (overlayEl) return; // overlay handler takes priority
-    const tag = (document.activeElement || {}).tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (isTypingInField()) return;
     if (findAgainButton()) return; // grading in progress takes priority
     if (findNavButtonBySymbol(NAV_SYMBOL_BY_KEY[e.key])) return; // end-of-quiz buttons take priority
 
@@ -1127,9 +1142,7 @@
   function onNavKeydown(e) {
     if (!scriptActive) return;
     if (!isAnkiPage()) return;
-    const tag = (document.activeElement || {}).tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-    if (e.target && e.target.isContentEditable) return;
+    if (isTypingInField()) return;
 
     const symbol = NAV_SYMBOL_BY_KEY[e.key];
     if (!symbol) return;
@@ -1147,8 +1160,7 @@
   function onEscapeKeydown(e) {
     if (!scriptActive) return;
     if (e.key !== 'Escape') return;
-    const tag = (document.activeElement || {}).tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (isTypingInField()) return;
     if (location.pathname === '/learn') return; // already there
 
     e.preventDefault();
