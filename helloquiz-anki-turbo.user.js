@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.3.1
+// @version      1.3.2
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -536,8 +536,12 @@
     hideReviewOverlay();
     pendingReview = false;
     if (wasNavPause) {
-      // End-of-quiz pause: just reveal the nav buttons, no timer to start.
+      // End-of-quiz pause: reveal the nav buttons. The last question is no
+      // longer relevant on this screen, so stop mirroring it.
       endNavPause();
+      setMirrorMessage('');
+      setMirrorActive(false);
+      ensureMirror();
       return;
     }
     setMirrorToCurrentQuestion();
@@ -623,8 +627,17 @@
   function watchForNavButtons() {
     const present = anyNavButtonPresent();
     if (present) {
-      if (!navButtonsWerePresent && reviewPause && pendingReview) {
-        startNavPause();
+      if (!navButtonsWerePresent) {
+        if (reviewPause && pendingReview) {
+          startNavPause();
+        } else {
+          // Buttons are visible straight away (no review pause needed,
+          // e.g. the last answer was correct) - the last question is no
+          // longer relevant on this screen, so stop mirroring it.
+          setMirrorMessage('');
+          setMirrorActive(false);
+          ensureMirror();
+        }
       }
       // Keep the pause enforced across React re-renders.
       if (navPausePending) {
