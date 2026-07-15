@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.3.3
+// @version      1.3.4
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -135,6 +135,7 @@
     removeTimerBar();
 
     const wrap = document.createElement('div');
+    wrap.className = TIMER_BAR_CLASS;
     wrap.style.cssText = `
       position: relative;
       height: 6px;
@@ -259,6 +260,10 @@
     if (document.hidden) {
       pauseTimer();
     } else {
+      // Both the poll and the mutation observer idle while the tab is
+      // hidden - run one pass right away so nothing stays stale until the
+      // next tick.
+      pollPass();
       resumeTimer();
     }
   }
@@ -287,6 +292,7 @@
   const KBD_CLASS = 'hq-timer-kbd'; // must be declared before installHideStyle() runs at document-start
   const NAVSYM_CLASS = 'hq-timer-navsym'; // wraps the ▶/⇋/→ glyph so we can hide it via CSS
   const NAV_HIDE_CLASS = 'hq-nav-hide';   // hides end-of-quiz nav buttons during the pause
+  const TIMER_BAR_CLASS = 'hq-timer-bar'; // marks the injected timer bar (for the mutation filter)
   const MIRROR_ACTIVE_CLASS = 'hq-timer-mirror-active';
   let mirrorActive = false;
 
@@ -385,10 +391,46 @@
   let mirrorObserver = null;
   let observerBusy = false;
 
+  // Is this node one of the elements the script injected itself (or inside
+  // one)? Mutations confined to those are just our own DOM writes echoing
+  // back through the observer - the watchers have nothing to react to.
+  function isOwnNode(node) {
+    if (node === hideStyleEl) return true;
+    const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    if (!el) return false;
+    return !!el.closest(
+      '.' + MIRROR_CLASS +
+      ', kbd.' + KBD_CLASS +
+      ', span.' + NAVSYM_CLASS +
+      ', .' + TIMER_BAR_CLASS +
+      ', .' + SETTINGS_BLOCK_CLASS +
+      ', .hq-nav-msg'
+    );
+  }
+
+  function isRelevantMutation(record) {
+    if (isOwnNode(record.target)) return false;
+    if (record.type === 'childList') {
+      // Inserting/removing our own elements registers on their (site-owned)
+      // parent; the record is still ours if every changed node is ours.
+      for (const n of record.addedNodes) if (!isOwnNode(n)) return true;
+      for (const n of record.removedNodes) if (!isOwnNode(n)) return true;
+      return false;
+    }
+    return true;
+  }
+
   function installMirrorObserver() {
     if (mirrorObserver) return;
-    mirrorObserver = new MutationObserver(() => {
+    mirrorObserver = new MutationObserver((records) => {
       if (!scriptActive || observerBusy) return;
+      invalidateNavScan(); // the DOM changed - any cached nav scan is stale
+      // Hidden tab: no paint is imminent, so pre-paint work is pointless
+      // (and background churn is wasted CPU). The refocus pass in
+      // onVisibilityChange catches up when the tab comes back.
+      if (document.hidden) return;
+      // Skip the pass entirely when the mutations are only our own writes.
+      if (!records.some(isRelevantMutation)) return;
       observerBusy = true; // our own DOM writes below also trigger mutations
       try {
         ensureMirror();
@@ -574,8 +616,38 @@
   // buttons and wait for a click first, so the final mistake gets a review
   // pause too. Continuing reuses the same map-tap / key-1 / click machinery.
 
+  // Nav-button lookup used to run its own full-document [class*=...] query
+  // on every call - up to ~9 scans in a single watcher pass, since several
+  // watchers each look up several symbols. Instead, do ONE scan per DOM
+  // generation and let every lookup share it. The generation counter is
+  // bumped whenever the DOM may have changed (each observer callback, each
+  // poll tick, and defensively in the key handlers).
+  let navScanGen = 0;
+  let navScanCache = null; // { gen, bySymbol }
+
+  function invalidateNavScan() {
+    navScanGen++;
+  }
+
+  function scanNavButtons() {
+    if (navScanCache && navScanCache.gen === navScanGen) return navScanCache.bySymbol;
+    const bySymbol = {};
+    const spans = document.querySelectorAll('span[class*="generic-quiz-module"][class*="expanded"]');
+    for (const span of spans) {
+      const button = span.closest('button');
+      if (!button) continue;
+      const text = button.textContent;
+      for (const { symbol } of NAV_BUTTONS) {
+        if (!bySymbol[symbol] && text.includes(symbol)) bySymbol[symbol] = button;
+      }
+    }
+    navScanCache = { gen: navScanGen, bySymbol };
+    return bySymbol;
+  }
+
   function anyNavButtonPresent() {
-    return NAV_BUTTONS.some(({ symbol }) => findNavButtonBySymbol(symbol));
+    const bySymbol = scanNavButtons();
+    return NAV_BUTTONS.some(({ symbol }) => bySymbol[symbol]);
   }
 
   function showNavPauseMessage() {
@@ -1116,6 +1188,7 @@
     if (overlayEl) return; // overlay handler takes priority
     if (isTypingInField()) return;
     if (findAgainButton()) return; // grading in progress takes priority
+    invalidateNavScan(); // key events run outside a watcher pass - rescan
     if (findNavButtonBySymbol(NAV_SYMBOL_BY_KEY[e.key])) return; // end-of-quiz buttons take priority
 
     if (openQuizListRow(index)) {
@@ -1131,12 +1204,7 @@
 
   function findNavButtonBySymbol(symbol) {
     if (!symbol) return null;
-    const spans = document.querySelectorAll('span[class*="generic-quiz-module"][class*="expanded"]');
-    for (const span of spans) {
-      const button = span.closest('button');
-      if (button && button.textContent.includes(symbol)) return button;
-    }
-    return null;
+    return scanNavButtons()[symbol] || null;
   }
 
   function onNavKeydown(e) {
@@ -1149,6 +1217,7 @@
     if (overlayEl) return; // overlay's own "1" handling takes priority
     if (e.key === '1' && findAgainButton()) return; // grading takes priority
 
+    invalidateNavScan(); // key events run outside a watcher pass - rescan
     const button = findNavButtonBySymbol(symbol);
     if (!button) return;
 
@@ -1424,23 +1493,33 @@
     window.addEventListener('blur', onWindowBlur);
     window.addEventListener('focus', onWindowFocus);
     setInterval(() => {
-      // Runtime page check: SPA navigation can move us to non-anki pages
-      // where all features must stay off.
-      setActive(isAnkiPage());
-      if (!scriptActive) return;
-
-      ensureListKbdHints();
-      ensureNavKbdHints();
-      ensureSettingsPanel();
-      updateForceClickWarning();
-      ensureHideStyle();
-      hideQuestion(); // re-assert the <html> class in case it was stripped
-      ensureMirror();
-      watchForQuizChange();
-      watchForNewQuestion();
-      watchForGradingButtons();
-      watchForNavButtons();
+      // Hidden tab: nothing visible to maintain; the refocus pass in
+      // onVisibilityChange catches up when the tab comes back.
+      if (document.hidden) return;
+      pollPass();
     }, 200);
+  }
+
+  // One full maintenance pass. Runs every 200ms while the tab is visible,
+  // and once immediately when the tab becomes visible again.
+  function pollPass() {
+    // Runtime page check: SPA navigation can move us to non-anki pages
+    // where all features must stay off.
+    setActive(isAnkiPage());
+    if (!scriptActive) return;
+
+    invalidateNavScan();
+    ensureListKbdHints();
+    ensureNavKbdHints();
+    ensureSettingsPanel();
+    updateForceClickWarning();
+    ensureHideStyle();
+    hideQuestion(); // re-assert the <html> class in case it was stripped
+    ensureMirror();
+    watchForQuizChange();
+    watchForNewQuestion();
+    watchForGradingButtons();
+    watchForNavButtons();
   }
 
   if (document.readyState === 'loading') {
