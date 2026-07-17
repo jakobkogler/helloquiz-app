@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.3.5
+// @version      1.4.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -437,6 +437,7 @@
       observerBusy = true; // our own DOM writes below also trigger mutations
       try {
         ensureMirror();
+        ensureHintMirror();
         ensureListKbdHints();
         ensureNavKbdHints();
         ensureSettingsPanel();
@@ -860,6 +861,179 @@
     });
   }
 
+  // ---------- Hint tracking (displayed vs. preloaded question) ----------
+
+  // The site preloads the next question the moment a guess is submitted:
+  // during our review pause, the real (hidden) question label, the hint
+  // line, and its "edit" button all already belong to the NEXT question
+  // while the user still sees the answered one. To make the hint line and
+  // hint editing refer to the DISPLAYED question instead, we
+  //  - remember every question's id and hint from the quiz's anki
+  //    question-list response (GET /api/quiz/<id>/anki/question),
+  //  - remember which question was just answered from the guess request
+  //    (POST /api/game/<play>/question/<id>/guess),
+  //  - while a review is pending, overwrite the hint line's text with the
+  //    answered question's hint (ensureHintMirror) and rewrite the target
+  //    id of hint edits (PUT /api/question/<id>/hint) to the answered
+  //    question. See docs/helloquiz-api.md for the endpoints.
+
+  const ANKI_QUESTIONS_RE = /\/api\/quiz\/[^/]+\/anki\/question(?:\?|$)/;
+  const GUESS_RE = /\/api\/game\/[^/]+\/question\/([^/]+)\/guess(?:\?|$)/;
+  const HINT_RE = /\/api\/question\/([^/]+)\/hint(?:\?|$)/;
+
+  const questionInfoById = Object.create(null); // id -> { question, hint }
+  let lastAnsweredQuestionId = null;
+
+  function rememberQuestions(list) {
+    if (!Array.isArray(list)) return;
+    for (const q of list) {
+      if (q && typeof q.id === 'string') {
+        questionInfoById[q.id] = {
+          question: q.question,
+          // customHint is the user-set hint and wins over the default one
+          hint: (q.customHint != null ? q.customHint : q.hint) || '',
+        };
+      }
+    }
+  }
+
+  function rememberHintFromBody(id, body) {
+    if (typeof body !== 'string') return;
+    try {
+      const data = JSON.parse(body);
+      if (data && typeof data.hint === 'string') {
+        const info = questionInfoById[id] || (questionInfoById[id] = { question: '', hint: '' });
+        info.hint = data.hint;
+      }
+    } catch (e) { /* body not JSON - nothing to remember */ }
+  }
+
+  // While a review pause shows the previous question, a hint edit aimed at
+  // the site's current (preloaded) question must target the displayed one
+  // instead. Returns the id to redirect to, or null to leave the request as
+  // is. No rewrite at quiz start ("Click to start"): nothing was answered.
+  function hintEditTargetId(siteTargetId) {
+    if (scriptActive && isAnkiPage() && pendingReview && lastAnsweredQuestionId &&
+        lastAnsweredQuestionId !== siteTargetId) {
+      return lastAnsweredQuestionId;
+    }
+    return null;
+  }
+
+  function installFetchHook() {
+    const origFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      let url = '';
+      let method = 'GET';
+      try {
+        url = typeof input === 'string' ? input : (input instanceof URL ? input.href : (input && input.url) || '');
+        method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+
+        if (method === 'POST') {
+          const m = url.match(GUESS_RE);
+          if (m) lastAnsweredQuestionId = decodeURIComponent(m[1]);
+        } else if (method === 'PUT') {
+          const m = url.match(HINT_RE);
+          if (m) {
+            const siteId = decodeURIComponent(m[1]);
+            const target = hintEditTargetId(siteId);
+            if (target) {
+              const newUrl = url.replace(HINT_RE, '/api/question/' + encodeURIComponent(target) + '/hint');
+              if (DEBUG) console.log('[helloquiz-timer] redirecting hint edit', url, '->', newUrl);
+              if (typeof input === 'string' || input instanceof URL) input = newUrl;
+              else input = new Request(newUrl, input);
+            }
+            rememberHintFromBody(target || siteId, init && init.body);
+          }
+        }
+      } catch (e) { /* never break the site's requests */ }
+
+      const resPromise = origFetch(input, init);
+      if (method === 'GET' && ANKI_QUESTIONS_RE.test(url)) {
+        resPromise.then((res) => {
+          try {
+            res.clone().json().then((data) => {
+              if (data && Array.isArray(data.message)) rememberQuestions(data.message);
+            }).catch(() => {});
+          } catch (e) { /* response not clonable/JSON - ignore */ }
+        }, () => {});
+      }
+      return resPromise;
+    };
+  }
+
+  // Same interception for XMLHttpRequest, in case the site (or a future
+  // version of it) doesn't use fetch for these calls.
+  function installXhrHook() {
+    const origOpen = XMLHttpRequest.prototype.open;
+    const origSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+      try {
+        this._hqMethod = String(method || 'GET').toUpperCase();
+        this._hqUrl = typeof url === 'string' ? url : String(url);
+        if (this._hqMethod === 'PUT') {
+          const m = this._hqUrl.match(HINT_RE);
+          if (m) {
+            const siteId = decodeURIComponent(m[1]);
+            const target = hintEditTargetId(siteId);
+            this._hqHintTarget = target || siteId;
+            if (target) {
+              url = this._hqUrl.replace(HINT_RE, '/api/question/' + encodeURIComponent(target) + '/hint');
+              this._hqUrl = url;
+              if (DEBUG) console.log('[helloquiz-timer] redirecting hint edit (XHR) ->', url);
+            }
+          }
+        }
+      } catch (e) { /* never break the site's requests */ }
+      return origOpen.call(this, method, url, ...rest);
+    };
+    XMLHttpRequest.prototype.send = function (body) {
+      try {
+        if (this._hqMethod === 'POST') {
+          const m = (this._hqUrl || '').match(GUESS_RE);
+          if (m) lastAnsweredQuestionId = decodeURIComponent(m[1]);
+        } else if (this._hqHintTarget) {
+          rememberHintFromBody(this._hqHintTarget, body);
+        } else if (this._hqMethod === 'GET' && ANKI_QUESTIONS_RE.test(this._hqUrl || '')) {
+          this.addEventListener('load', () => {
+            try {
+              const data = JSON.parse(this.responseText);
+              if (data && Array.isArray(data.message)) rememberQuestions(data.message);
+            } catch (e) { /* not JSON - ignore */ }
+          });
+        }
+      } catch (e) { /* never break the site's requests */ }
+      return origSend.call(this, body);
+    };
+  }
+
+  // The hint line under the question: <p class="...hint">hint: xyz <span>edit</span></p>
+  function findHintTextNode() {
+    const p = document.querySelector('[class*="scoreAndHint"] p[class*="hint"]');
+    if (!p) return null;
+    const first = p.firstChild;
+    return (first && first.nodeType === Node.TEXT_NODE) ? first : null;
+  }
+
+  // While a review is pending, the site's hint line belongs to the
+  // preloaded NEXT question; overwrite its text with the hint of the
+  // question the user actually sees. The "edit" span stays untouched - the
+  // request rewrite above makes it edit the right question. At quiz start
+  // (nothing answered yet) the hint is blanked instead: it would belong to
+  // the still-hidden first question.
+  function ensureHintMirror() {
+    if (!scriptActive || !pendingReview) return;
+    const node = findHintTextNode();
+    if (!node) return;
+    let hint = '';
+    if (lastAnsweredQuestionId) {
+      const info = questionInfoById[lastAnsweredQuestionId];
+      hint = (info && info.hint) || '';
+    }
+    const desired = 'hint: ' + hint + ' ';
+    if (node.data !== desired) node.data = desired;
+  }
+
   // ---------- Watchers ----------
 
   // Invalidate the stored question signature so watchForNewQuestion treats
@@ -882,6 +1056,7 @@
     // New quiz starts paused too: wait for a click before showing the
     // question and starting the timer.
     markPendingReview('quiz start');
+    lastAnsweredQuestionId = null; // previous quiz's answer is irrelevant
     forceQuestionRedetect();
   }
 
@@ -927,6 +1102,7 @@
       navButtonsWerePresent = false;
       pendingReview = false;
       timedOut = false;
+      lastAnsweredQuestionId = null;
       showQuestion();
       removeMirror();
       removeListKbdHints();
@@ -1519,11 +1695,18 @@
     ensureHideStyle();
     hideQuestion(); // re-assert the <html> class in case it was stripped
     ensureMirror();
+    ensureHintMirror();
     watchForQuizChange();
     watchForNewQuestion();
     watchForGradingButtons();
     watchForNavButtons();
   }
+
+  // Install the network hooks immediately (document-start): the quiz data
+  // is fetched before DOMContentLoaded, so hooking inside init() would miss
+  // the question-list response that carries the hints.
+  installFetchHook();
+  installXhrHook();
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
