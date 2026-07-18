@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.7
+// @version      1.4.8
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -449,8 +449,6 @@
       observerBusy = true; // our own DOM writes below also trigger mutations
       try {
         ensureMirror();
-        ensureHintMirror();
-        ensureFallbackHintLine();
         ensureListKbdHints();
         ensureNavKbdHints();
         ensureSettingsPanel();
@@ -461,6 +459,10 @@
         watchForQuizChange();
         watchForNewQuestion();
         watchForNavButtons();
+        // After the watchers: the hint sync learns from / enforces against
+        // the mirror, which the watchers above may just have updated.
+        ensureHintMirror();
+        ensureFallbackHintLine();
       } finally {
         observerBusy = false;
       }
@@ -943,8 +945,12 @@
       if (q && typeof q.id === 'string') {
         questionInfoById[q.id] = {
           question: typeof q.question === 'string' ? q.question.trim() : '',
-          // customHint is the user-set hint and wins over the default one
-          hint: (q.customHint != null ? q.customHint : q.hint) || '',
+          // customHint is the user-set hint and wins over the default one -
+          // but only when actually set (a cleared custom hint comes back as
+          // "" and must not shadow the default hint).
+          hint: (typeof q.customHint === 'string' && q.customHint !== '')
+            ? q.customHint
+            : (q.hint || ''),
         };
       }
     }
@@ -1176,15 +1182,21 @@
     delete valueNode._hqBlankedValue;
 
     const id = displayedQuestionId();
-    let desired = null;
-    if (id) {
-      desired = questionInfoById[id].hint + ' ';
-    } else if (pendingReview) {
-      // e.g. "Click to start": the shown hint would belong to the
-      // still-hidden upcoming question - blank it.
-      desired = '';
+    if (!pendingReview) {
+      // Outside a pause the site's line already belongs to the displayed
+      // question - it is authoritative. Overwriting it here erased default
+      // hints the anki response doesn't carry (it only has custom ones);
+      // instead LEARN such a hint from the DOM so later pauses can show it.
+      const shown = valueNode.data.trim();
+      if (id && shown && questionInfoById[id].hint === '') {
+        questionInfoById[id].hint = shown;
+      }
+      return;
     }
-    if (desired !== null && valueNode.data !== desired) valueNode.data = desired;
+    // During a pause the site's value belongs to the preloaded next
+    // question - enforce the displayed question's hint instead.
+    const desired = id ? questionInfoById[id].hint + ' ' : '';
+    if (valueNode.data !== desired) valueNode.data = desired;
   }
 
   // During a pause the site's hint line can be missing entirely: on the
@@ -1946,12 +1958,14 @@
     ensureHideStyle();
     hideQuestion(); // re-assert the <html> class in case it was stripped
     ensureMirror();
-    ensureHintMirror();
-    ensureFallbackHintLine();
     watchForQuizChange();
     watchForNewQuestion();
     watchForGradingButtons();
     watchForNavButtons();
+    // After the watchers: the hint sync learns from / enforces against the
+    // mirror, which the watchers above may just have updated.
+    ensureHintMirror();
+    ensureFallbackHintLine();
   }
 
   // Install the network hooks immediately (document-start): the quiz data
