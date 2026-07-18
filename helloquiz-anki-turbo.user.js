@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.6
+// @version      1.4.7
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -1187,14 +1187,16 @@
     if (desired !== null && valueNode.data !== desired) valueNode.data = desired;
   }
 
-  // On the end-of-quiz pause screen the site removes its hint line
-  // entirely (a bug upstream: the app is already in its "quiz done"
-  // state). Provide our own line there - same look and behavior: a
-  // display toggle honoring the collapse rules, and an edit action that
-  // PUTs through the same (hooked) endpoint the site uses.
+  // During a pause the site's hint line can be missing entirely: on the
+  // end-of-quiz screen it is removed (an upstream bug - the app is already
+  // in its "quiz done" state), and mid-quiz it isn't rendered at all when
+  // the preloaded NEXT question has no hint - even though the DISPLAYED
+  // question may have one. Provide our own line then - same look and
+  // behavior: a display toggle honoring the collapse rules, and an edit
+  // action that PUTs through the same (hooked) endpoint the site uses.
   function ensureFallbackHintLine() {
     const existing = document.querySelector('p.' + HINT_LINE_CLASS);
-    const id = scriptActive && navPausePending && !findHintEl() ? displayedQuestionId() : null;
+    const id = scriptActive && pendingReview && !findHintEl() ? displayedQuestionId() : null;
     if (!id) {
       if (existing) existing.remove();
       return;
@@ -1208,7 +1210,8 @@
       contentEl.appendChild(p);
     }
     const hint = questionInfoById[id].hint || '';
-    const revealed = !quizUsesHintToggle || displayedHintKey() === hintRevealedFor;
+    // An empty hint has nothing to protect - no point in a display toggle.
+    const revealed = !quizUsesHintToggle || !hint || displayedHintKey() === hintRevealedFor;
     const state = revealed ? 'r:' + hint : 'c';
     if (p.dataset.hqState === state) return;
     p.dataset.hqState = state;
