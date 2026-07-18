@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.9
+// @version      1.4.10
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -927,6 +927,10 @@
 
   const questionInfoById = Object.create(null); // id -> { question, hint }
   let lastAnsweredQuestionId = null;
+  // The site's current question, learned from guess responses (each one
+  // carries the next question being preloaded). Complements the text/image
+  // matching in displayedQuestionId for questions that can't be matched.
+  let siteCurrentQuestionId = null;
   // The site collapses hints behind a "display" toggle in some quizzes, but
   // its collapsed/revealed state belongs to ITS current (preloaded)
   // question - so a hint revealed during the pause stays revealed when the
@@ -935,25 +939,41 @@
   let hintRevealedFor = null;      // displayedHintKey() of the question whose hint the user revealed
   let quizUsesHintToggle = false;  // seen a site "display" toggle in this quiz
 
+  function rememberQuestion(q) {
+    if (!q || typeof q.id !== 'string') return;
+    questionInfoById[q.id] = {
+      question: typeof q.question === 'string' ? q.question.trim() : '',
+      // customHint is the user-set hint and wins over the default one -
+      // but only when actually set (a cleared custom hint comes back as
+      // "" and must not shadow the default hint).
+      hint: (typeof q.customHint === 'string' && q.customHint !== '')
+        ? q.customHint
+        : (q.hint || ''),
+    };
+  }
+
   function rememberQuestions(list) {
     if (!Array.isArray(list)) return;
     // Each response carries the current quiz's complete question list;
     // rebuild the map so stale entries from other quizzes can't shadow a
     // same-named question (displayedQuestionId matches by question text).
     for (const key in questionInfoById) delete questionInfoById[key];
-    for (const q of list) {
-      if (q && typeof q.id === 'string') {
-        questionInfoById[q.id] = {
-          question: typeof q.question === 'string' ? q.question.trim() : '',
-          // customHint is the user-set hint and wins over the default one -
-          // but only when actually set (a cleared custom hint comes back as
-          // "" and must not shadow the default hint).
-          hint: (typeof q.customHint === 'string' && q.customHint !== '')
-            ? q.customHint
-            : (q.hint || ''),
-        };
-      }
+    for (const q of list) rememberQuestion(q);
+  }
+
+  // The guess response carries the NEXT question the site just preloaded -
+  // that is the site's current question from then on. The exact response
+  // shape isn't pinned down, so only accept objects that look like one.
+  function rememberNextQuestion(data) {
+    let q = null;
+    if (data && typeof data.message === 'object' && data.message !== null && !Array.isArray(data.message)) {
+      q = data.message;
+    } else if (data && typeof data.id === 'string') {
+      q = data;
     }
+    if (!q || typeof q.id !== 'string') return;
+    siteCurrentQuestionId = q.id;
+    if (typeof q.question === 'string') rememberQuestion(q); // merge, don't wipe
   }
 
   // Which question is the user actually looking at right now? The mirror is
@@ -968,8 +988,24 @@
       for (const id in questionInfoById) {
         if (questionInfoById[id].question === text) return id;
       }
+    } else if (mirrorHTML !== null) {
+      // Image question: match the mirrored <img> src against the question
+      // field (which holds the image URL for image quizzes). Substring
+      // matching in both directions absorbs relative/absolute differences.
+      const m = mirrorHTML.match(/\bsrc="([^"]+)"/);
+      if (m) {
+        const src = m[1].replace(/&amp;/g, '&');
+        for (const id in questionInfoById) {
+          const q = questionInfoById[id].question;
+          if (q && (q === src || src.includes(q) || q.includes(src))) return id;
+        }
+      }
     }
     if (pendingReview && lastAnsweredQuestionId) return lastAnsweredQuestionId;
+    // Outside a pause the mirror shows the site's current question - if we
+    // learned its id from the last guess response, use that (covers image
+    // questions whose src can't be matched against the question field).
+    if (!pendingReview && siteCurrentQuestionId) return siteCurrentQuestionId;
     return null;
   }
 
@@ -1040,6 +1076,12 @@
             }).catch(() => {});
           } catch (e) { /* response not clonable/JSON - ignore */ }
         }, () => {});
+      } else if (method === 'POST' && GUESS_RE.test(url)) {
+        resPromise.then((res) => {
+          try {
+            res.clone().json().then(rememberNextQuestion).catch(() => {});
+          } catch (e) { /* response not clonable/JSON - ignore */ }
+        }, () => {});
       }
       return resPromise;
     };
@@ -1074,7 +1116,14 @@
       try {
         if (this._hqMethod === 'POST') {
           const m = (this._hqUrl || '').match(GUESS_RE);
-          if (m) lastAnsweredQuestionId = decodeURIComponent(m[1]);
+          if (m) {
+            lastAnsweredQuestionId = decodeURIComponent(m[1]);
+            this.addEventListener('load', () => {
+              try {
+                rememberNextQuestion(JSON.parse(this.responseText));
+              } catch (e) { /* not JSON - ignore */ }
+            });
+          }
         } else if (this._hqHintTarget) {
           rememberHintFromBody(this._hqHintTarget, body);
         } else if (this._hqMethod === 'GET' && ANKI_QUESTIONS_RE.test(this._hqUrl || '')) {
@@ -1315,6 +1364,7 @@
     // question and starting the timer.
     markPendingReview('quiz start');
     lastAnsweredQuestionId = null; // previous quiz's answer is irrelevant
+    siteCurrentQuestionId = null;
     hintRevealedFor = null;
     quizUsesHintToggle = false;
     forceQuestionRedetect();
@@ -1363,6 +1413,7 @@
       pendingReview = false;
       timedOut = false;
       lastAnsweredQuestionId = null;
+      siteCurrentQuestionId = null;
       hintRevealedFor = null;
       quizUsesHintToggle = false;
       document.documentElement.classList.remove(HINT_HIDE_CLASS);
