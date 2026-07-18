@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.12
+// @version      1.4.13
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -545,16 +545,10 @@
       html.${HINT_HIDE_CLASS} [class*="scoreAndHint"] {
         display: none !important;
       }
-      /* Our fallback hint line on the end-of-quiz pause screen (the site
-         removes its own there). Site styles don't reach it, so give the
-         action spans a link-ish look of their own. */
-      p.${HINT_LINE_CLASS} {
-        margin: 0;
-      }
-      p.${HINT_LINE_CLASS} span.${HINT_DISPLAY_CLASS},
-      p.${HINT_LINE_CLASS} span.${HINT_EDIT_CLASS} {
+      /* Our fallback hint line borrows the site's own hint class for its
+         look; just make sure the action spans read as clickable. */
+      p.${HINT_LINE_CLASS} span {
         cursor: pointer;
-        color: blueviolet;
       }
     `;
     // Prefer <head> when it exists (more stable across hydration);
@@ -1195,7 +1189,9 @@
   //   collapsed: "hint: " | <span>display</span> | <span>edit</span>
   //   revealed:  "hint: " | "xyz "               | <span>edit</span>
   function findHintEl() {
-    return document.querySelector('[class*="scoreAndHint"] p[class*="hint"]');
+    // :not() excludes our own fallback line, which borrows the site's hint
+    // class for styling (and whose own class contains "hint" too).
+    return document.querySelector('[class*="scoreAndHint"] p[class*="hint"]:not(.' + HINT_LINE_CLASS + ')');
   }
 
   // Keep the hint line in sync with the question the user actually sees
@@ -1297,12 +1293,16 @@
     }
     const contentEl = findContentElForMirror();
     if (!contentEl) return;
+    // Live inside the site's scoreAndHint container when it exists (it is
+    // often left empty on these screens) and wear the site's own hint
+    // class, so the line is styled exactly like the regular one.
+    const host = contentEl.querySelector('[class*="scoreAndHint"]') || contentEl;
     let p = existing;
     if (!p) {
       p = document.createElement('p');
-      p.className = HINT_LINE_CLASS;
-      contentEl.appendChild(p);
+      p.className = HINT_LINE_CLASS + ' generic-quiz-module__m31QtG__hint';
     }
+    if (p.parentElement !== host) host.appendChild(p);
     const hint = questionInfoById[id].hint || '';
     // An empty hint has nothing to protect - no point in a display toggle.
     const revealed = !quizUsesHintToggle || !hint || displayedHintKey() === hintRevealedFor;
