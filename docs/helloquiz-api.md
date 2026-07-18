@@ -82,6 +82,9 @@ Sets the custom hint of a question.
 ```
 
 Because of the preloading described above, clicking "edit" on the hint line
-during the review pause would edit the *next* question's hint. The
-userscript rewrites `questionId` in this request to the displayed
-(just-answered) question while a review pause is active.
+can target a different question than the one on screen (e.g. the preloaded
+next question during the review pause). The userscript resolves the
+question the user is actually looking at (by matching the displayed
+question text against the question list above) and rewrites `questionId`
+in this request — and the prefill of the site's hint prompt — to that
+question whenever they differ.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.1
+// @version      1.4.2
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -886,15 +886,36 @@
 
   function rememberQuestions(list) {
     if (!Array.isArray(list)) return;
+    // Each response carries the current quiz's complete question list;
+    // rebuild the map so stale entries from other quizzes can't shadow a
+    // same-named question (displayedQuestionId matches by question text).
+    for (const key in questionInfoById) delete questionInfoById[key];
     for (const q of list) {
       if (q && typeof q.id === 'string') {
         questionInfoById[q.id] = {
-          question: q.question,
+          question: typeof q.question === 'string' ? q.question.trim() : '',
           // customHint is the user-set hint and wins over the default one
           hint: (q.customHint != null ? q.customHint : q.hint) || '',
         };
       }
     }
+  }
+
+  // Which question is the user actually looking at right now? The mirror is
+  // the source of truth for that: during a review pause it shows the
+  // answered question while the site has already moved on, and otherwise it
+  // shows the live one. Resolve its text against the question map; image
+  // questions have no text, so fall back to the answered id while a review
+  // pause is showing it.
+  function displayedQuestionId() {
+    if (mirrorHTML === null && mirrorText) {
+      const text = mirrorText.trim();
+      for (const id in questionInfoById) {
+        if (questionInfoById[id].question === text) return id;
+      }
+    }
+    if (pendingReview && lastAnsweredQuestionId) return lastAnsweredQuestionId;
+    return null;
   }
 
   function rememberHintFromBody(id, body) {
@@ -908,16 +929,14 @@
     } catch (e) { /* body not JSON - nothing to remember */ }
   }
 
-  // While a review pause shows the previous question, a hint edit aimed at
-  // the site's current (preloaded) question must target the displayed one
-  // instead. Returns the id to redirect to, or null to leave the request as
-  // is. No rewrite at quiz start ("Click to start"): nothing was answered.
+  // A hint edit aimed at a question other than the displayed one must be
+  // redirected to the displayed question. Returns the id to redirect to, or
+  // null to leave the request as is (also at quiz start, when no question
+  // is displayed and displayedQuestionId can't resolve one).
   function hintEditTargetId(siteTargetId) {
-    if (scriptActive && isAnkiPage() && pendingReview && lastAnsweredQuestionId &&
-        lastAnsweredQuestionId !== siteTargetId) {
-      return lastAnsweredQuestionId;
-    }
-    return null;
+    if (!scriptActive || !isAnkiPage()) return null;
+    const id = displayedQuestionId();
+    return (id && id !== siteTargetId) ? id : null;
   }
 
   function installFetchHook() {
@@ -1008,18 +1027,19 @@
   }
 
   // The "edit" button asks for the new hint via a native
-  // window.prompt('Enter the new hint', <current hint>) - prefilled with
-  // the preloaded NEXT question's hint. During a review pause, swap the
-  // prefill for the displayed question's hint so it matches the question
-  // the edit actually targets (the request rewrite above).
+  // window.prompt('Enter the new hint', <current hint>) - prefilled from
+  // the site's state, which can lag behind or run ahead of what the user
+  // sees. Whenever the displayed question is known, prefill with ITS hint
+  // so the prompt matches the question the edit actually targets (the
+  // request rewrite above).
   function installPromptHook() {
     const origPrompt = window.prompt.bind(window);
     window.prompt = function (message, defaultValue) {
       try {
         if (typeof message === 'string' && message.toLowerCase().includes('hint') &&
-            scriptActive && isAnkiPage() && pendingReview && lastAnsweredQuestionId) {
-          const info = questionInfoById[lastAnsweredQuestionId];
-          defaultValue = (info && info.hint) || '';
+            scriptActive && isAnkiPage()) {
+          const id = displayedQuestionId();
+          if (id) defaultValue = questionInfoById[id].hint || '';
         }
       } catch (e) { /* fall back to the site's own prefill */ }
       return origPrompt(message, defaultValue);
@@ -1034,23 +1054,24 @@
     return (first && first.nodeType === Node.TEXT_NODE) ? first : null;
   }
 
-  // While a review is pending, the site's hint line belongs to the
-  // preloaded NEXT question; overwrite its text with the hint of the
-  // question the user actually sees. The "edit" span stays untouched - the
-  // request rewrite above makes it edit the right question. At quiz start
-  // (nothing answered yet) the hint is blanked instead: it would belong to
-  // the still-hidden first question.
+  // Keep the hint line in sync with the question the user actually sees
+  // (the site's own line can belong to the preloaded next question). The
+  // "edit" span stays untouched - the request rewrite above makes it edit
+  // the right question. At quiz start ("Click to start", no displayed
+  // question) the hint is blanked: it would belong to the still-hidden
+  // first question.
   function ensureHintMirror() {
-    if (!scriptActive || !pendingReview) return;
+    if (!scriptActive) return;
     const node = findHintTextNode();
     if (!node) return;
-    let hint = '';
-    if (lastAnsweredQuestionId) {
-      const info = questionInfoById[lastAnsweredQuestionId];
-      hint = (info && info.hint) || '';
+    const id = displayedQuestionId();
+    let desired = null;
+    if (id) {
+      desired = 'hint: ' + (questionInfoById[id].hint || '') + ' ';
+    } else if (pendingReview) {
+      desired = 'hint: ';
     }
-    const desired = 'hint: ' + hint + ' ';
-    if (node.data !== desired) node.data = desired;
+    if (desired !== null && node.data !== desired) node.data = desired;
   }
 
   // ---------- Watchers ----------
