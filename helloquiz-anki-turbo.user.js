@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.11
+// @version      1.4.12
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -941,14 +941,22 @@
 
   function rememberQuestion(q) {
     if (!q || typeof q.id !== 'string') return;
+    const prev = questionInfoById[q.id];
+    // customHint is the user-set hint and wins over the default one - but
+    // only when actually set (a cleared custom hint comes back as "" and
+    // must not shadow the default hint).
+    const hint = (typeof q.customHint === 'string' && q.customHint !== '')
+      ? q.customHint
+      : (q.hint || '');
     questionInfoById[q.id] = {
-      question: typeof q.question === 'string' ? q.question.trim() : '',
-      // customHint is the user-set hint and wins over the default one -
-      // but only when actually set (a cleared custom hint comes back as
-      // "" and must not shadow the default hint).
-      hint: (typeof q.customHint === 'string' && q.customHint !== '')
-        ? q.customHint
-        : (q.hint || ''),
+      question: typeof q.question === 'string' && q.question.trim() !== ''
+        ? q.question.trim()
+        : (prev ? prev.question : ''),
+      // Sparser sources (the guess response) must never erase a hint we
+      // already know - the map may hold one from the anki list or learned
+      // from the DOM. (The full-list rebuild wipes the map first, so this
+      // fallback never keeps stale data across quizzes.)
+      hint: hint || (prev ? prev.hint : ''),
     };
   }
 
