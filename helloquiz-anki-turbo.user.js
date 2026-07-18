@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.13
+// @version      1.4.14
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -461,6 +461,7 @@
         watchForNavButtons();
         // After the watchers: the hint sync learns from / enforces against
         // the mirror, which the watchers above may just have updated.
+        watchDisplayedQuestion();
         ensureHintMirror();
         ensureFallbackHintLine();
       } finally {
@@ -1162,6 +1163,18 @@
       } catch (e) { /* fall back to the site's own prefill */ }
       return origPrompt(message, defaultValue);
     };
+  }
+
+  // A hint reveal is scoped to ONE presentation of a question: whenever the
+  // displayed question changes, the reveal memory clears - so the same card
+  // returning later in the session (anki repeats lapsed cards) or in the
+  // next round starts collapsed again.
+  let lastDisplayedKey = null;
+  function watchDisplayedQuestion() {
+    const key = displayedHintKey();
+    if (key === lastDisplayedKey) return;
+    lastDisplayedKey = key;
+    hintRevealedFor = null;
   }
 
   // Console helper for debugging hint resolution: run hqHintDebug() in the
@@ -2048,6 +2061,7 @@
     watchForNavButtons();
     // After the watchers: the hint sync learns from / enforces against the
     // mirror, which the watchers above may just have updated.
+    watchDisplayedQuestion();
     ensureHintMirror();
     ensureFallbackHintLine();
   }
