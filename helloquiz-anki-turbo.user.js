@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.8
+// @version      1.4.9
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -1199,16 +1199,18 @@
     if (valueNode.data !== desired) valueNode.data = desired;
   }
 
-  // During a pause the site's hint line can be missing entirely: on the
-  // end-of-quiz screen it is removed (an upstream bug - the app is already
-  // in its "quiz done" state), and mid-quiz it isn't rendered at all when
-  // the preloaded NEXT question has no hint - even though the DISPLAYED
+  // The site's hint line can be missing entirely while a question is still
+  // displayed: on the end-of-quiz screen (an upstream bug - the app is
+  // already in its "quiz done" state), on the grading screen after a
+  // correct answer (again/hard/good/easy), and mid-pause when the
+  // preloaded NEXT question has no hint - even though the DISPLAYED
   // question may have one. Provide our own line then - same look and
   // behavior: a display toggle honoring the collapse rules, and an edit
   // action that PUTs through the same (hooked) endpoint the site uses.
   function ensureFallbackHintLine() {
     const existing = document.querySelector('p.' + HINT_LINE_CLASS);
-    const id = scriptActive && pendingReview && !findHintEl() ? displayedQuestionId() : null;
+    const relevantState = pendingReview || !!findAgainButton();
+    const id = scriptActive && relevantState && !findHintEl() ? displayedQuestionId() : null;
     if (!id) {
       if (existing) existing.remove();
       return;
