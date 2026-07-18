@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.4
+// @version      1.4.5
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -294,6 +294,9 @@
   const NAV_HIDE_CLASS = 'hq-nav-hide';   // hides end-of-quiz nav buttons during the pause
   const TIMER_BAR_CLASS = 'hq-timer-bar'; // marks the injected timer bar (for the mutation filter)
   const HINT_DISPLAY_CLASS = 'hq-hint-display'; // our own "display" toggle in the hint line
+  const HINT_HIDE_CLASS = 'hq-hint-hide';   // on <html> while no question is displayed (status message)
+  const HINT_LINE_CLASS = 'hq-hint-line';   // our fallback hint line on the end-of-quiz pause screen
+  const HINT_EDIT_CLASS = 'hq-hint-edit';   // the "edit" action in our fallback hint line
   const MIRROR_ACTIVE_CLASS = 'hq-timer-mirror-active';
   let mirrorActive = false;
 
@@ -337,6 +340,10 @@
   // Snapshot the current question into the mirror's state. We snapshot (rather
   // than reference the live node) so the mirror can keep showing the answered
   // question during a review pause while the site swaps in the next one.
+  // Is the mirror showing a status message ("Click to start") rather than
+  // an actual question? While true, no question is displayed at all.
+  let mirrorIsStatus = true;
+
   function captureQuestionToMirror(qEl) {
     if (questionHasImage(qEl)) {
       mirrorHTML = qEl.innerHTML;
@@ -344,6 +351,7 @@
       mirrorHTML = null;
       mirrorText = qEl.textContent;
     }
+    mirrorIsStatus = false;
   }
 
   // Show a plain-text status in the mirror (e.g. "Click to start"), clearing
@@ -351,6 +359,7 @@
   function setMirrorMessage(text) {
     mirrorText = text;
     mirrorHTML = null;
+    mirrorIsStatus = true;
   }
 
   // Replace whatever question the mirror shows with a plain status message
@@ -407,6 +416,7 @@
       ', kbd.' + KBD_CLASS +
       ', span.' + NAVSYM_CLASS +
       ', span.' + HINT_DISPLAY_CLASS +
+      ', p.' + HINT_LINE_CLASS +
       ', .' + TIMER_BAR_CLASS +
       ', .' + SETTINGS_BLOCK_CLASS +
       ', .hq-nav-msg'
@@ -440,6 +450,7 @@
       try {
         ensureMirror();
         ensureHintMirror();
+        ensureFallbackHintLine();
         ensureListKbdHints();
         ensureNavKbdHints();
         ensureSettingsPanel();
@@ -525,6 +536,23 @@
       span.${HINT_DISPLAY_CLASS} {
         cursor: pointer;
         margin-right: 4px;
+      }
+      /* While the mirror shows a status message ("Click to start") instead
+         of a question, the site's hint line belongs to the still-hidden
+         question - hide it entirely. */
+      html.${HINT_HIDE_CLASS} [class*="scoreAndHint"] {
+        display: none !important;
+      }
+      /* Our fallback hint line on the end-of-quiz pause screen (the site
+         removes its own there). Site styles don't reach it, so give the
+         action spans a link-ish look of their own. */
+      p.${HINT_LINE_CLASS} {
+        margin: 0;
+      }
+      p.${HINT_LINE_CLASS} span.${HINT_DISPLAY_CLASS},
+      p.${HINT_LINE_CLASS} span.${HINT_EDIT_CLASS} {
+        cursor: pointer;
+        color: blueviolet;
       }
     `;
     // Prefer <head> when it exists (more stable across hydration);
@@ -1094,6 +1122,10 @@
   // (clicking it is handled in onHintDisplayClick).
   function ensureHintMirror() {
     if (!scriptActive) return;
+    // No question displayed ("Click to start"): the site's hint line would
+    // belong to the still-hidden question - hide it wholesale via CSS.
+    document.documentElement.classList.toggle(HINT_HIDE_CLASS, mirrorIsStatus);
+    if (mirrorIsStatus) return;
     const p = findHintEl();
     if (!p) return;
     const first = p.firstChild;
@@ -1149,22 +1181,91 @@
     if (desired !== null && valueNode.data !== desired) valueNode.data = desired;
   }
 
-  // Clicks on the hint line's toggles: our own span reveals the displayed
-  // question's hint; a click on the SITE's toggle is only observed (never
-  // blocked) to remember that the reveal belongs to the displayed question.
+  // On the end-of-quiz pause screen the site removes its hint line
+  // entirely (a bug upstream: the app is already in its "quiz done"
+  // state). Provide our own line there - same look and behavior: a
+  // display toggle honoring the collapse rules, and an edit action that
+  // PUTs through the same (hooked) endpoint the site uses.
+  function ensureFallbackHintLine() {
+    const existing = document.querySelector('p.' + HINT_LINE_CLASS);
+    const id = scriptActive && navPausePending && !findHintEl() ? displayedQuestionId() : null;
+    if (!id) {
+      if (existing) existing.remove();
+      return;
+    }
+    const contentEl = findContentElForMirror();
+    if (!contentEl) return;
+    let p = existing;
+    if (!p) {
+      p = document.createElement('p');
+      p.className = HINT_LINE_CLASS;
+      contentEl.appendChild(p);
+    }
+    const hint = questionInfoById[id].hint || '';
+    const revealed = !quizUsesHintToggle || displayedHintKey() === hintRevealedFor;
+    const state = revealed ? 'r:' + hint : 'c';
+    if (p.dataset.hqState === state) return;
+    p.dataset.hqState = state;
+    p.textContent = 'hint: ';
+    if (revealed) {
+      p.appendChild(document.createTextNode(hint + ' '));
+    } else {
+      const toggle = document.createElement('span');
+      toggle.className = HINT_DISPLAY_CLASS;
+      toggle.textContent = 'display';
+      p.appendChild(toggle);
+      p.appendChild(document.createTextNode(' '));
+    }
+    const edit = document.createElement('span');
+    edit.className = HINT_EDIT_CLASS;
+    edit.textContent = 'edit';
+    p.appendChild(edit);
+  }
+
+  function removeFallbackHintLine() {
+    document.querySelectorAll('p.' + HINT_LINE_CLASS).forEach((el) => el.remove());
+  }
+
+  // The edit action of our fallback line: same prompt + PUT as the site's
+  // own edit. The request runs through our fetch hook, which also updates
+  // the local hint map, so the line refreshes on the next pass.
+  function editDisplayedHint() {
+    const id = displayedQuestionId();
+    if (!id) return;
+    const entered = window.prompt('Enter the new hint', questionInfoById[id].hint || '');
+    if (entered === null) return;
+    hintRevealedFor = displayedHintKey(); // show the result of the edit
+    fetch('/api/question/' + encodeURIComponent(id) + '/hint', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ hint: entered }),
+    }).catch(() => { /* the site shows no error feedback either */ });
+  }
+
+  // Clicks on the hint lines' actions: our display toggles (site line and
+  // fallback line) reveal the displayed question's hint, our fallback edit
+  // opens the hint prompt; a click on the SITE's toggle is only observed
+  // (never blocked) to remember that the reveal belongs to the displayed
+  // question.
   function onHintDisplayClick(e) {
     if (!scriptActive) return;
-    const p = findHintEl();
-    if (!p || !p.contains(e.target)) return;
-    const span = e.target.closest('span');
+    const span = e.target && e.target.closest ? e.target.closest('span') : null;
     if (!span) return;
     if (span.classList.contains(HINT_DISPLAY_CLASS)) {
       e.preventDefault();
       e.stopPropagation();
       hintRevealedFor = displayedHintKey();
       ensureHintMirror(); // reveal immediately
+      ensureFallbackHintLine();
+    } else if (span.classList.contains(HINT_EDIT_CLASS)) {
+      e.preventDefault();
+      e.stopPropagation();
+      editDisplayedHint();
     } else if (span.textContent.trim() === 'display') {
-      hintRevealedFor = displayedHintKey();
+      const siteLine = findHintEl();
+      if (siteLine && siteLine.contains(span)) {
+        hintRevealedFor = displayedHintKey();
+      }
     }
   }
 
@@ -1241,6 +1342,8 @@
       lastAnsweredQuestionId = null;
       hintRevealedFor = null;
       quizUsesHintToggle = false;
+      document.documentElement.classList.remove(HINT_HIDE_CLASS);
+      removeFallbackHintLine();
       showQuestion();
       removeMirror();
       removeListKbdHints();
@@ -1835,6 +1938,7 @@
     hideQuestion(); // re-assert the <html> class in case it was stripped
     ensureMirror();
     ensureHintMirror();
+    ensureFallbackHintLine();
     watchForQuizChange();
     watchForNewQuestion();
     watchForGradingButtons();
