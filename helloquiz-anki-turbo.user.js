@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.5
+// @version      1.4.6
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -747,6 +747,12 @@
   // underneath. Covers the case where the end-of-quiz screen has no map to tap.
   function onNavPauseClick(e) {
     if (!scriptActive || !navPausePending || !navPauseArmed) return;
+    // Clicks on the hint line (display toggle / edit) are interactions with
+    // the hint, not a continue gesture - leave them to onHintDisplayClick.
+    if (e.target && e.target.closest &&
+        e.target.closest('p.' + HINT_LINE_CLASS + ', [class*="scoreAndHint"]')) {
+      return;
+    }
     e.stopImmediatePropagation();
     e.preventDefault();
     if (DEBUG) console.log('[helloquiz-timer] nav pause: click -> reveal buttons');
