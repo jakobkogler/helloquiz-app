@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.2
+// @version      1.4.3
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -1046,32 +1046,52 @@
     };
   }
 
-  // The hint line under the question: <p class="...hint">hint: xyz <span>edit</span></p>
-  function findHintTextNode() {
-    const p = document.querySelector('[class*="scoreAndHint"] p[class*="hint"]');
-    if (!p) return null;
-    const first = p.firstChild;
-    return (first && first.nodeType === Node.TEXT_NODE) ? first : null;
+  // The hint line under the question. Its children are SEPARATE nodes
+  // (React renders each expression as its own text node):
+  //   collapsed: "hint: " | <span>display</span> | <span>edit</span>
+  //   revealed:  "hint: " | "xyz "               | <span>edit</span>
+  function findHintEl() {
+    return document.querySelector('[class*="scoreAndHint"] p[class*="hint"]');
   }
 
   // Keep the hint line in sync with the question the user actually sees
-  // (the site's own line can belong to the preloaded next question). The
-  // "edit" span stays untouched - the request rewrite above makes it edit
-  // the right question. At quiz start ("Click to start", no displayed
-  // question) the hint is blanked: it would belong to the still-hidden
-  // first question.
+  // (the site's own line can belong to the preloaded next question). Only
+  // the VALUE text node is ever rewritten: the "hint: " prefix stays
+  // pristine (writing the hint into it revealed hints the site had
+  // collapsed behind "display" - and duplicated them once revealed), a
+  // collapsed hint stays collapsed, and the display/edit spans stay
+  // untouched - the request rewrite above makes "edit" target the right
+  // question, and "display" reveals the right hint via this same sync.
   function ensureHintMirror() {
     if (!scriptActive) return;
-    const node = findHintTextNode();
-    if (!node) return;
+    const p = findHintEl();
+    if (!p) return;
+    const first = p.firstChild;
+    if (!first || first.nodeType !== Node.TEXT_NODE) return;
+    if (first.data !== 'hint: ') first.data = 'hint: '; // undo any old pollution
+
+    let valueNode = null;
+    for (let node = first.nextSibling; node; node = node.nextSibling) {
+      if (node.nodeType === Node.ELEMENT_NODE && node.textContent.trim() === 'display') {
+        return; // hint is collapsed - revealing it is the user's call
+      }
+      if (node.nodeType === Node.TEXT_NODE && node.data.trim() !== '') {
+        valueNode = node;
+        break;
+      }
+    }
+    if (!valueNode) return; // nothing shown, nothing to sync
+
     const id = displayedQuestionId();
     let desired = null;
     if (id) {
-      desired = 'hint: ' + (questionInfoById[id].hint || '') + ' ';
+      desired = questionInfoById[id].hint + ' ';
     } else if (pendingReview) {
-      desired = 'hint: ';
+      // e.g. "Click to start": the shown hint would belong to the
+      // still-hidden upcoming question - blank it.
+      desired = '';
     }
-    if (desired !== null && node.data !== desired) node.data = desired;
+    if (desired !== null && valueNode.data !== desired) valueNode.data = desired;
   }
 
   // ---------- Watchers ----------
