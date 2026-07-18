@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.3
+// @version      1.4.4
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -293,6 +293,7 @@
   const NAVSYM_CLASS = 'hq-timer-navsym'; // wraps the ▶/⇋/→ glyph so we can hide it via CSS
   const NAV_HIDE_CLASS = 'hq-nav-hide';   // hides end-of-quiz nav buttons during the pause
   const TIMER_BAR_CLASS = 'hq-timer-bar'; // marks the injected timer bar (for the mutation filter)
+  const HINT_DISPLAY_CLASS = 'hq-hint-display'; // our own "display" toggle in the hint line
   const MIRROR_ACTIVE_CLASS = 'hq-timer-mirror-active';
   let mirrorActive = false;
 
@@ -405,6 +406,7 @@
       '.' + MIRROR_CLASS +
       ', kbd.' + KBD_CLASS +
       ', span.' + NAVSYM_CLASS +
+      ', span.' + HINT_DISPLAY_CLASS +
       ', .' + TIMER_BAR_CLASS +
       ', .' + SETTINGS_BLOCK_CLASS +
       ', .hq-nav-msg'
@@ -517,6 +519,12 @@
          doesn't shift anything). */
       html.${NAV_HIDE_CLASS} [class*="controlButtonsAnki"] {
         visibility: hidden !important;
+      }
+      /* Our own hint "display" toggle; the site styles the hint line's
+         spans via descendant selectors, so it mostly inherits that look. */
+      span.${HINT_DISPLAY_CLASS} {
+        cursor: pointer;
+        margin-right: 4px;
       }
     `;
     // Prefer <head> when it exists (more stable across hydration);
@@ -883,6 +891,13 @@
 
   const questionInfoById = Object.create(null); // id -> { question, hint }
   let lastAnsweredQuestionId = null;
+  // The site collapses hints behind a "display" toggle in some quizzes, but
+  // its collapsed/revealed state belongs to ITS current (preloaded)
+  // question - so a hint revealed during the pause stays revealed when the
+  // next question comes up. Track which displayed question the user
+  // actually revealed, and whether this quiz uses the toggle at all.
+  let hintRevealedFor = null;      // displayedHintKey() of the question whose hint the user revealed
+  let quizUsesHintToggle = false;  // seen a site "display" toggle in this quiz
 
   function rememberQuestions(list) {
     if (!Array.isArray(list)) return;
@@ -916,6 +931,15 @@
     }
     if (pendingReview && lastAnsweredQuestionId) return lastAnsweredQuestionId;
     return null;
+  }
+
+  // Stable key for "the question the user sees" even when no id can be
+  // resolved (image questions, map not loaded yet): fall back to the
+  // mirror's content itself.
+  function displayedHintKey() {
+    const id = displayedQuestionId();
+    if (id) return id;
+    return 'sig:' + (mirrorHTML !== null ? mirrorHTML : mirrorText);
   }
 
   function rememberHintFromBody(id, body) {
@@ -1058,10 +1082,16 @@
   // (the site's own line can belong to the preloaded next question). Only
   // the VALUE text node is ever rewritten: the "hint: " prefix stays
   // pristine (writing the hint into it revealed hints the site had
-  // collapsed behind "display" - and duplicated them once revealed), a
-  // collapsed hint stays collapsed, and the display/edit spans stay
-  // untouched - the request rewrite above makes "edit" target the right
-  // question, and "display" reveals the right hint via this same sync.
+  // collapsed behind "display" - and duplicated them once revealed), and
+  // the display/edit spans stay untouched - the request rewrite above
+  // makes "edit" target the right question.
+  //
+  // Collapse handling: the site's collapsed/revealed state follows ITS
+  // current (preloaded) question, so a hint revealed during the pause would
+  // stay revealed when the next question comes up. When this quiz uses the
+  // display toggle and the user hasn't revealed the hint of the question
+  // now displayed, blank the value and offer our own "display" span
+  // (clicking it is handled in onHintDisplayClick).
   function ensureHintMirror() {
     if (!scriptActive) return;
     const p = findHintEl();
@@ -1070,17 +1100,42 @@
     if (!first || first.nodeType !== Node.TEXT_NODE) return;
     if (first.data !== 'hint: ') first.data = 'hint: '; // undo any old pollution
 
+    const ourSpan = p.querySelector('span.' + HINT_DISPLAY_CLASS);
     let valueNode = null;
     for (let node = first.nextSibling; node; node = node.nextSibling) {
-      if (node.nodeType === Node.ELEMENT_NODE && node.textContent.trim() === 'display') {
-        return; // hint is collapsed - revealing it is the user's call
+      if (node.nodeType === Node.ELEMENT_NODE && node !== ourSpan &&
+          node.textContent.trim() === 'display') {
+        // The site's own toggle is showing: it is collapsed correctly, and
+        // this quiz evidently uses the toggle.
+        quizUsesHintToggle = true;
+        if (ourSpan) ourSpan.remove();
+        return;
       }
-      if (node.nodeType === Node.TEXT_NODE && node.data.trim() !== '') {
+      if (node.nodeType === Node.TEXT_NODE && (node.data.trim() !== '' || node._hqBlankedValue)) {
         valueNode = node;
         break;
       }
     }
-    if (!valueNode) return; // nothing shown, nothing to sync
+    if (!valueNode) {
+      if (ourSpan) ourSpan.remove(); // no value rendered - nothing to guard
+      return;
+    }
+
+    if (quizUsesHintToggle && displayedHintKey() !== hintRevealedFor) {
+      // Left revealed by the site for a question the user never revealed:
+      // re-collapse it behind our own toggle.
+      if (valueNode.data !== '') valueNode.data = '';
+      valueNode._hqBlankedValue = true; // still recognizable as the value node
+      if (!ourSpan) {
+        const span = document.createElement('span');
+        span.className = HINT_DISPLAY_CLASS;
+        span.textContent = 'display';
+        p.insertBefore(span, valueNode);
+      }
+      return;
+    }
+    if (ourSpan) ourSpan.remove();
+    delete valueNode._hqBlankedValue;
 
     const id = displayedQuestionId();
     let desired = null;
@@ -1092,6 +1147,25 @@
       desired = '';
     }
     if (desired !== null && valueNode.data !== desired) valueNode.data = desired;
+  }
+
+  // Clicks on the hint line's toggles: our own span reveals the displayed
+  // question's hint; a click on the SITE's toggle is only observed (never
+  // blocked) to remember that the reveal belongs to the displayed question.
+  function onHintDisplayClick(e) {
+    if (!scriptActive) return;
+    const p = findHintEl();
+    if (!p || !p.contains(e.target)) return;
+    const span = e.target.closest('span');
+    if (!span) return;
+    if (span.classList.contains(HINT_DISPLAY_CLASS)) {
+      e.preventDefault();
+      e.stopPropagation();
+      hintRevealedFor = displayedHintKey();
+      ensureHintMirror(); // reveal immediately
+    } else if (span.textContent.trim() === 'display') {
+      hintRevealedFor = displayedHintKey();
+    }
   }
 
   // ---------- Watchers ----------
@@ -1117,6 +1191,8 @@
     // question and starting the timer.
     markPendingReview('quiz start');
     lastAnsweredQuestionId = null; // previous quiz's answer is irrelevant
+    hintRevealedFor = null;
+    quizUsesHintToggle = false;
     forceQuestionRedetect();
   }
 
@@ -1163,6 +1239,8 @@
       pendingReview = false;
       timedOut = false;
       lastAnsweredQuestionId = null;
+      hintRevealedFor = null;
+      quizUsesHintToggle = false;
       showQuestion();
       removeMirror();
       removeListKbdHints();
@@ -1719,6 +1797,7 @@
     installMirrorObserver();
     installHistoryHook();
     document.addEventListener('click', onNavPauseClick, true);
+    document.addEventListener('click', onHintDisplayClick, true);
     document.addEventListener('click', onPossibleNavClick, true);
     document.addEventListener('click', onReviewMapClickBlock, true);
     document.addEventListener('pointerdown', onNavPausePointerDown, true);
