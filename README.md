@@ -5,7 +5,8 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 ## Features
 
 - **Per-question countdown** — a thin timer bar counts down from a configurable number of seconds. When it runs out, the card is automatically graded as failed ("again"), so slowly scanning the map for the right city/region gets penalized automatically.
-- **Review pause after mistakes** — when you answer wrong (or time out), the quiz pauses on the current card so you can study and learn it before moving on.
+- **Review pause after mistakes** — when you answer wrong (or time out), the quiz pauses on the current card so you can study and learn it before moving on. This replaces the app's own **"force correct click"** mode, which doesn't work correctly for city quizzes — the review pause gives you the same "look at the right answer before continuing" effect on every quiz type.
+- **Adjusted hints** — the hint line below the question (and its *display* / *edit* actions) always refers to the question you actually see. Without the script, the app secretly preloads the next question the moment you answer, so during the pause the shown hint — and any hint edit — would silently apply to the *next* question. The script keeps them attached to the displayed question, so viewing and changing hints works even in the pause mode (and on the grading and end-of-quiz screens, where the app normally drops the hint line entirely).
 - **Settings** — the quiz's settings panel is extended, so that you can enable/disable the countdown timer, set the timer duration, and enable/disable the review pause. The timer duration defaults to one value for all quizzes, but you can override it per quiz — tick *quiz specific timer countdown* while in a quiz to give just that one its own duration. All settings are remembered across sessions, but stored locally in the browser, so they are not synced across devices.
 - **Keyboard shortcuts** with matching on-screen key badges:
   - <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> — grade the current card (again / hard / good / easy)
@@ -20,7 +21,9 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 2. Install the script from its [raw URL](https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js) — most userscript managers will detect it and prompt to install. Alternatively, open `helloquiz-anki-turbo.user.js` and let the manager install it (or add it as a new script and paste the contents).
 3. Navigate to an [Anki-mode page on helloquiz.app](https://helloquiz.app/learn) — the script activates automatically.
 
-> **Note:** This currently works best with the app's **"force correct click"** setting **disabled**. With it enabled the review pause doesn't behave correctly (in particular on city quizzes), so leave it off for now.
+> **Note:** This currently works best with the app's **"force correct click"** setting **disabled**. With it enabled the review pause doesn't behave correctly (in particular on city quizzes), so leave it off for now — the review pause covers the same use case.
+
+> **Note:** The script currently only works correctly in the app's **compact** quiz mode. In the full-map mode some parts (e.g. the settings panel additions) don't display properly yet.
 
 ## Screenshots
 
