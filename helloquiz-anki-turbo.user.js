@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.0
+// @version      1.4.1
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -1007,6 +1007,25 @@
     };
   }
 
+  // The "edit" button asks for the new hint via a native
+  // window.prompt('Enter the new hint', <current hint>) - prefilled with
+  // the preloaded NEXT question's hint. During a review pause, swap the
+  // prefill for the displayed question's hint so it matches the question
+  // the edit actually targets (the request rewrite above).
+  function installPromptHook() {
+    const origPrompt = window.prompt.bind(window);
+    window.prompt = function (message, defaultValue) {
+      try {
+        if (typeof message === 'string' && message.toLowerCase().includes('hint') &&
+            scriptActive && isAnkiPage() && pendingReview && lastAnsweredQuestionId) {
+          const info = questionInfoById[lastAnsweredQuestionId];
+          defaultValue = (info && info.hint) || '';
+        }
+      } catch (e) { /* fall back to the site's own prefill */ }
+      return origPrompt(message, defaultValue);
+    };
+  }
+
   // The hint line under the question: <p class="...hint">hint: xyz <span>edit</span></p>
   function findHintTextNode() {
     const p = document.querySelector('[class*="scoreAndHint"] p[class*="hint"]');
@@ -1707,6 +1726,7 @@
   // the question-list response that carries the hints.
   installFetchHook();
   installXhrHook();
+  installPromptHook();
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
