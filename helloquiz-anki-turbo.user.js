@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.10
+// @version      1.4.11
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -964,7 +964,10 @@
   // The guess response carries the NEXT question the site just preloaded -
   // that is the site's current question from then on. The exact response
   // shape isn't pinned down, so only accept objects that look like one.
+  let lastGuessResponse = null; // raw, for hqHintDebug()
+
   function rememberNextQuestion(data) {
+    lastGuessResponse = data;
     let q = null;
     if (data && typeof data.message === 'object' && data.message !== null && !Array.isArray(data.message)) {
       q = data.message;
@@ -1158,6 +1161,26 @@
       return origPrompt(message, defaultValue);
     };
   }
+
+  // Console helper for debugging hint resolution: run hqHintDebug() in the
+  // browser console on a misbehaving screen and inspect/paste the output.
+  window.hqHintDebug = function () {
+    return {
+      mirrorIsStatus: mirrorIsStatus,
+      mirrorText: mirrorHTML === null ? mirrorText : null,
+      mirrorImgSrc: mirrorHTML !== null ? (mirrorHTML.match(/\bsrc="([^"]+)"/) || [])[1] : null,
+      pendingReview: pendingReview,
+      lastAnsweredQuestionId: lastAnsweredQuestionId,
+      siteCurrentQuestionId: siteCurrentQuestionId,
+      displayedQuestionId: displayedQuestionId(),
+      hintElPresent: !!findHintEl(),
+      gradingButtons: !!findAgainButton(),
+      questionCount: Object.keys(questionInfoById).length,
+      questionSample: Object.entries(questionInfoById).slice(0, 3)
+        .map(([id, q]) => ({ id: id, question: q.question, hint: q.hint })),
+      lastGuessResponse: lastGuessResponse,
+    };
+  };
 
   // The hint line under the question. Its children are SEPARATE nodes
   // (React renders each expression as its own text node):
