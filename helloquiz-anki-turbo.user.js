@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.14
+// @version      1.4.15
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -107,6 +107,11 @@
 
   function findQuizTitleEl() {
     return document.querySelector('.quiz-module__HPadfW__titleText');
+  }
+
+  // The bracketed action list next to the title ([remixes / new remix / ...])
+  function findTitleActionsEl() {
+    return document.querySelector('.quiz-module__HPadfW__remixButton');
   }
 
   // The container holding the anki grading buttons (again/hard/good/easy)
@@ -297,6 +302,7 @@
   const HINT_HIDE_CLASS = 'hq-hint-hide';   // on <html> while no question is displayed (status message)
   const HINT_LINE_CLASS = 'hq-hint-line';   // our fallback hint line on the end-of-quiz pause screen
   const HINT_EDIT_CLASS = 'hq-hint-edit';   // the "edit" action in our fallback hint line
+  const QUIZ_LINK_CLASS = 'hq-quiz-link';   // our link to the normal quiz in the title's action list
   const MIRROR_ACTIVE_CLASS = 'hq-timer-mirror-active';
   let mirrorActive = false;
 
@@ -1342,6 +1348,42 @@
     document.querySelectorAll('p.' + HINT_LINE_CLASS).forEach((el) => el.remove());
   }
 
+  // The anki page offers no way over to the same quiz in its normal mode.
+  // Add one as the first entry of the site's own bracketed action list next
+  // to the title: the current quiz URL without the ?learn flag.
+  function ensureQuizLink() {
+    if (!location.pathname.startsWith('/quiz/')) return; // no title actions on /learn
+    const actions = findTitleActionsEl();
+    if (!actions) return;
+    const url = new URL(location.href);
+    url.searchParams.delete('learn');
+    const href = url.pathname + url.search + url.hash;
+    let link = actions.querySelector('a.' + QUIZ_LINK_CLASS);
+    if (!link) {
+      // Insert before the site's first link ("remixes") so we land after the
+      // opening bracket rather than in front of it.
+      const first = actions.querySelector('a');
+      if (!first) return; // unexpected markup - leave the line alone
+      link = document.createElement('a');
+      link.className = QUIZ_LINK_CLASS;
+      link.textContent = 'normal quiz';
+      actions.insertBefore(link, first);
+      actions.insertBefore(document.createTextNode(' / '), first);
+    }
+    // The title survives SPA navigation between quizzes, so keep the target
+    // pointing at whichever quiz is currently open.
+    if (link.getAttribute('href') !== href) link.setAttribute('href', href);
+  }
+
+  function removeQuizLink() {
+    document.querySelectorAll('a.' + QUIZ_LINK_CLASS).forEach((el) => {
+      // Drop the separator we added along with the link.
+      const sep = el.nextSibling;
+      if (sep && sep.nodeType === Node.TEXT_NODE && sep.textContent === ' / ') sep.remove();
+      el.remove();
+    });
+  }
+
   // The edit action of our fallback line: same prompt + PUT as the site's
   // own edit. The request runs through our fetch hook, which also updates
   // the local hint map, so the line refreshes on the next pass.
@@ -1462,6 +1504,7 @@
       quizUsesHintToggle = false;
       document.documentElement.classList.remove(HINT_HIDE_CLASS);
       removeFallbackHintLine();
+      removeQuizLink();
       showQuestion();
       removeMirror();
       removeListKbdHints();
@@ -2050,6 +2093,7 @@
     invalidateNavScan();
     ensureListKbdHints();
     ensureNavKbdHints();
+    ensureQuizLink();
     ensureSettingsPanel();
     updateForceClickWarning();
     ensureHideStyle();
