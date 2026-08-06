@@ -1,0 +1,7 @@
+{
+  "name": "helloquiz-anki-turbo",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

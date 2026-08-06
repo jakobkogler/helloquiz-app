@@ -25,6 +25,19 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 
 > **Note:** The script currently only works correctly in the app's **compact** quiz mode. In the full-map mode some parts (e.g. the settings panel additions) don't display properly yet.
 
+## Development
+
+The regression suite uses Node's built-in test runner and has no package
+dependencies:
+
+```bash
+npm test
+```
+
+It checks that the userscript parses, that selectors do not pin generated
+CSS-module hashes from a particular helloquiz.app build, and that quiz-list
+discovery stays anchored to learn-mode links.
+
 ## Screenshots
 
 The countdown bar across the top, and the *Anki Turbo Config* options in the quiz's settings panel:
