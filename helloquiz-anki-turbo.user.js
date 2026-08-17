@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.5.0
-// @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
+// @version      1.6.0
+// @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=helloquiz.app
@@ -45,6 +45,9 @@
         running: running,
         reviewPause: reviewPause,
         perQuizSeconds: perQuizSeconds,
+        autoGrade: autoGrade,
+        autoGradeEasy: autoGradeEasy,
+        autoGradeGood: autoGradeGood,
       }));
     } catch (e) { /* storage unavailable - not critical */ }
   }
@@ -59,6 +62,28 @@
   // just its own duration: perQuizSeconds maps a quiz title to its seconds.
   // Quizzes without an entry fall back to the global default.
   let perQuizSeconds = (saved.perQuizSeconds && typeof saved.perQuizSeconds === 'object') ? saved.perQuizSeconds : {};
+  // Auto-grade: when a question is answered correctly in time, grade it from
+  // how much of the countdown was left instead of asking. Off by default -
+  // it takes the hard/good/easy decision out of the user's hands.
+  let autoGrade = typeof saved.autoGrade === 'boolean' ? saved.autoGrade : false;
+  // Thresholds on the leftover countdown: at or above `easy` the card is
+  // graded easy, at or above `good` it's good, anything slower is hard.
+  // With the default 10s timer that makes an answer within 3.4s easy, within
+  // 6.7s good, and slower than that hard.
+  let autoGradeEasy = percentOr(saved.autoGradeEasy, 66);
+  let autoGradeGood = percentOr(saved.autoGradeGood, 33);
+  // A stored pair that isn't ordered would make one of the grades
+  // unreachable; fall back to the defaults rather than guess which one to fix.
+  if (autoGradeGood >= autoGradeEasy) {
+    autoGradeEasy = 66;
+    autoGradeGood = 33;
+  }
+
+  // A stored percentage of the countdown, or the default when it's missing or
+  // out of range.
+  function percentOr(value, fallback) {
+    return (typeof value === 'number' && value > 0 && value < 100) ? value : fallback;
+  }
 
   // ---------- State ----------
 
@@ -309,6 +334,7 @@
   const HELP_CLASS = 'hq-help';             // the "?" badge next to a control
   const HELP_TEXT_CLASS = 'hq-help-text';   // the explanation it toggles
   const HELP_OPEN_CLASS = 'hq-help-open';   // on both while the explanation is shown
+  const NOTE_CLASS = 'hq-note';             // the dim "(…)" line under a config row
   const MIRROR_ACTIVE_CLASS = 'hq-timer-mirror-active';
   let mirrorActive = false;
 
@@ -650,6 +676,14 @@
       span.${HELP_TEXT_CLASS}.${HELP_OPEN_CLASS} {
         display: block;
       }
+      /* The "(…)" remark belonging to a config row. On its own line: the rows
+         are long enough that a trailing remark would wrap into the controls. */
+      span.${NOTE_CLASS} {
+        display: block;
+        margin-top: 1px;
+        font-size: 0.85em;
+        opacity: 0.6;
+      }
     `;
     // Prefer <head> when it exists (more stable across hydration);
     // fall back to <html> at document-start when head isn't there yet.
@@ -864,10 +898,12 @@
     return { badge, body };
   }
 
-  // The common case: badge at the end of a row, explanation right below it.
-  function appendHelp(row, text) {
+  // The common case: badge at the end of the controls, then the row's "(…)"
+  // note and the explanation, both of which are blocks and so stack below.
+  function appendHelp(row, text, note) {
     const { badge, body } = makeHelp(text);
     row.appendChild(badge);
+    if (note) row.appendChild(note);
     row.appendChild(body);
   }
 
@@ -1726,14 +1762,51 @@
 
     if (buttonsPresent && !buttonsWerePresent) {
       // Buttons just appeared — the user answered correctly on the map.
+      // Read the clock before clearTimer() throws the countdown away.
+      const leftover = remainingFraction();
       clearTimer();
       if (running && timedOut) {
         markPendingReview('timeout');
         again.click();
+      } else if (autoGrade && leftover !== null) {
+        autoGradeAnswer(leftover);
       }
     }
 
     buttonsWerePresent = buttonsPresent;
+  }
+
+  // ---------- Auto-grading (grade a correct answer from the leftover time) ----------
+
+  // How much of the countdown is still left, as a 0-1 fraction, or null when
+  // there is no countdown to judge by (timer off, or nothing running).
+  function remainingFraction() {
+    if (!running || timerFullSeconds <= 0) return null;
+    // A countdown is active while it has its handles, or while it sits parked
+    // in pausedRemaining after a tab switch.
+    if (!timerInterval && !timeoutHandle && pausedRemaining === null) return null;
+    if (timedOut) return 0;
+    const remaining = pausedRemaining !== null ? pausedRemaining : (timerDeadline - Date.now()) / 1000;
+    return Math.max(0, Math.min(1, remaining / timerFullSeconds));
+  }
+
+  // The grading button a given leftover time earns: the more of the countdown
+  // was left, the easier the card evidently was. "again" is never awarded here
+  // - failing is what the timeout path is for.
+  function autoGradeButtonTitle(fraction) {
+    if (fraction >= autoGradeEasy / 100) return '4'; // easy
+    if (fraction >= autoGradeGood / 100) return '3'; // good
+    return '2';                                      // hard
+  }
+
+  function autoGradeAnswer(fraction) {
+    const container = findGradingContainer();
+    if (!container) return;
+    const title = autoGradeButtonTitle(fraction);
+    const button = container.querySelector('button[title="' + title + '"]');
+    if (!button) return;
+    if (DEBUG) console.log('[helloquiz-timer] auto-grading with button', title, 'at', Math.round(fraction * 100) + '% left');
+    button.click();
   }
 
   // ---------- Nav button detection (▶ ⇋ →) ----------
@@ -2128,6 +2201,18 @@
   const QUIZ_TIMER_TIP = 'Gives the quiz you have open its own countdown, independent ' +
     'of the default above - handy for quizzes that need noticeably more (or less) ' +
     'time. Untick it to go back to the default.';
+  // The auto-grade row's explanation, in the seconds the current thresholds
+  // actually work out to - percentages of a countdown are hard to picture.
+  function autoGradeTip() {
+    const seconds = effectiveSeconds();
+    const at = (percent) => (seconds * percent / 100).toFixed(1).replace(/\.0$/, '') + 's';
+    return 'Grades a correct answer for you, from how much of the countdown was left: ' +
+      'easy from ' + autoGradeEasy + '% up, good from ' + autoGradeGood + '% up, hard below that. ' +
+      'With the current ' + seconds + 's countdown that means easy up to ' + at(100 - autoGradeEasy) +
+      ', good up to ' + at(100 - autoGradeGood) + ', hard after that. Answering too slowly still ' +
+      'counts as failed ("again"). Needs the countdown to be on.';
+  }
+
   const PAUSE_TIP = 'After a wrong answer (or a timeout) the quiz stops on the question ' +
     'you just missed, so you can study the map before moving on. Click the map or ' +
     'press 1 to continue. Replaces the site\'s "force correct click", which is broken ' +
@@ -2196,9 +2281,11 @@
       if (running && c) startTimer(c);
     };
 
-    // Set by the per-quiz row below (when a quiz is open) so the global on/off
-    // toggle can re-sync that row's enabled state.
+    // Set by the per-quiz and auto-grade rows below, so the global on/off
+    // toggle can re-sync their enabled state (neither means anything without
+    // a countdown to go by).
     let refreshQuizRow = null;
+    let refreshAutoGradeRow = null;
 
     // Global timer on/off + default duration (the seconds input greys out
     // while off). This duration applies to every quiz that has no override.
@@ -2223,6 +2310,8 @@
       if (!isNaN(val) && val > 0) {
         TIMER_SECONDS = val;
         saveSettings();
+        // The auto-grade explanation quotes the duration in seconds.
+        if (refreshAutoGradeRow) refreshAutoGradeRow();
         // Only restart when this default is what the current quiz actually
         // uses; a quiz with its own override is unaffected by the default.
         if (!hasQuizOverride(currentQuizTitle)) restartTimer();
@@ -2235,8 +2324,10 @@
       running = enabledCheckbox.checked;
       saveSettings();
       secInput.disabled = !running;
-      // The quiz-specific override only makes sense while the countdown is on.
+      // Neither the quiz-specific override nor auto-grading makes sense while
+      // the countdown is off.
       if (refreshQuizRow) refreshQuizRow();
+      if (refreshAutoGradeRow) refreshAutoGradeRow();
       const c = findMapContainer();
       if (running) {
         if (c) startTimer(c);
@@ -2248,14 +2339,13 @@
     });
 
     const defaultNote = document.createElement('span');
-    defaultNote.textContent = ' (default for all quizzes)';
-    defaultNote.style.opacity = '0.6';
+    defaultNote.className = NOTE_CLASS;
+    defaultNote.textContent = '(default for all quizzes)';
 
     timerP.appendChild(enabledLabel);
     timerP.appendChild(secInput);
     timerP.appendChild(document.createTextNode(' s'));
-    timerP.appendChild(defaultNote);
-    appendHelp(timerP, TIMER_TIP);
+    appendHelp(timerP, TIMER_TIP, defaultNote);
 
     // Per-quiz override: only shown while a quiz is open. Ticking it gives the
     // current quiz its own duration; unticking drops back to the global
@@ -2280,8 +2370,8 @@
       quizSecInput.style.width = '4em';
 
       const overrideNote = document.createElement('span');
-      overrideNote.textContent = ' (override)';
-      overrideNote.style.opacity = '0.6';
+      overrideNote.className = NOTE_CLASS;
+      overrideNote.textContent = '(override)';
 
       const refreshRow = () => {
         const on = hasQuizOverride(quizTitle);
@@ -2306,6 +2396,7 @@
         }
         saveSettings();
         refreshRow();
+        if (refreshAutoGradeRow) refreshAutoGradeRow();
         restartTimer();
       });
 
@@ -2314,6 +2405,7 @@
         if (!isNaN(val) && val > 0) {
           perQuizSeconds[quizTitle] = val;
           saveSettings();
+          if (refreshAutoGradeRow) refreshAutoGradeRow();
           restartTimer();
         } else {
           quizSecInput.value = String(hasQuizOverride(quizTitle) ? perQuizSeconds[quizTitle] : TIMER_SECONDS);
@@ -2323,10 +2415,91 @@
       quizP.appendChild(overrideLabel);
       quizP.appendChild(quizSecInput);
       quizP.appendChild(document.createTextNode(' s'));
-      quizP.appendChild(overrideNote);
-      appendHelp(quizP, QUIZ_TIMER_TIP);
+      appendHelp(quizP, QUIZ_TIMER_TIP, overrideNote);
       refreshRow();
     }
+
+    // Auto-grade: a correct answer grades itself from the leftover countdown,
+    // with the two thresholds (in percent of the countdown) side by side.
+    const autoP = document.createElement('p');
+
+    const autoLabel = document.createElement('label');
+    const autoCheckbox = document.createElement('input');
+    autoCheckbox.type = 'checkbox';
+    autoCheckbox.checked = autoGrade;
+    autoLabel.appendChild(autoCheckbox);
+    autoLabel.appendChild(document.createTextNode(' auto-grade by speed '));
+
+    const makePercentInput = (value) => {
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.min = '1';
+      input.max = '99';
+      input.step = '1';
+      input.value = String(value);
+      input.style.width = '3.5em';
+      return input;
+    };
+    const easyInput = makePercentInput(autoGradeEasy);
+    const goodInput = makePercentInput(autoGradeGood);
+
+    const autoNote = document.createElement('span');
+    autoNote.className = NOTE_CLASS;
+    autoNote.textContent = '(percentages of the countdown still left)';
+
+    // The explanation spells the thresholds out in seconds, so it has to be
+    // rebuilt whenever they change.
+    const autoHelp = makeHelp(autoGradeTip());
+
+    const refreshAutoRow = () => {
+      autoCheckbox.checked = autoGrade;
+      // Without a countdown there's nothing to measure the answer against.
+      autoCheckbox.disabled = !running;
+      easyInput.disabled = !autoGrade || !running;
+      goodInput.disabled = !autoGrade || !running;
+      // Also rewrites an input whose edit was rejected below.
+      easyInput.value = String(autoGradeEasy);
+      goodInput.value = String(autoGradeGood);
+      autoHelp.body.textContent = autoGradeTip();
+    };
+    refreshAutoGradeRow = refreshAutoRow;
+
+    autoCheckbox.addEventListener('change', () => {
+      autoGrade = autoCheckbox.checked;
+      saveSettings();
+      refreshAutoRow();
+    });
+
+    // The two thresholds have to stay ordered: with "easy" at or below "good"
+    // one of the two grades could never be awarded.
+    easyInput.addEventListener('change', () => {
+      const val = parseFloat(easyInput.value);
+      if (!isNaN(val) && val > autoGradeGood && val < 100) {
+        autoGradeEasy = val;
+        saveSettings();
+      }
+      refreshAutoRow();
+    });
+
+    goodInput.addEventListener('change', () => {
+      const val = parseFloat(goodInput.value);
+      if (!isNaN(val) && val > 0 && val < autoGradeEasy) {
+        autoGradeGood = val;
+        saveSettings();
+      }
+      refreshAutoRow();
+    });
+
+    autoP.appendChild(autoLabel);
+    autoP.appendChild(document.createTextNode('easy '));
+    autoP.appendChild(easyInput);
+    autoP.appendChild(document.createTextNode(' % / good '));
+    autoP.appendChild(goodInput);
+    autoP.appendChild(document.createTextNode(' %'));
+    autoP.appendChild(autoHelp.badge);
+    autoP.appendChild(autoNote);
+    autoP.appendChild(autoHelp.body);
+    refreshAutoRow();
 
     // Pause after a wrong answer (review) vs. jump straight to the next one
     const pauseP = document.createElement('p');
@@ -2357,6 +2530,7 @@
     block.appendChild(heading);
     block.appendChild(timerP);
     if (currentQuizTitle) block.appendChild(quizP);
+    block.appendChild(autoP);
     block.appendChild(pauseP);
     block.appendChild(warning);
     container.appendChild(block);
