@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.6.0
+// @version      1.6.1
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -236,7 +236,30 @@
     }, seconds * 1000);
   }
 
+  // Is the user looking at a live question right now? Everything that starts a
+  // countdown goes through startTimer, so this is the one place that decides
+  // whether there is anything to count down for. Three ways there isn't: a
+  // pause is in progress (review pause, or the "Click to start" screen), the
+  // mirror is showing a status message instead of a question, or the quiz
+  // hasn't rendered a question at all yet.
+  // (A pause always has pendingReview set, so that flag alone covers it -
+  // checking overlayEl too would only add a way to block a legitimate start
+  // if the marker ever outlives the pause by a pass.)
+  function questionIsLive() {
+    if (pendingReview) return false;
+    if (mirrorIsStatus) return false;
+    return hasQuestionOnScreen();
+  }
+
   function startTimer(container) {
+    // Guarded centrally rather than per caller: besides a question appearing,
+    // the settings panel starts timers too (ticking "timer countdown",
+    // changing a duration), and neither should do anything while the question
+    // is still hidden behind a pause.
+    if (!questionIsLive()) {
+      if (DEBUG) console.log('[helloquiz-timer] startTimer ignored: no question on screen');
+      return;
+    }
     if (DEBUG) console.log('[helloquiz-timer] startTimer called, running =', running, 'seconds =', effectiveSeconds());
     clearTimer();
     timedOut = false;
@@ -762,8 +785,26 @@
     overlayEl = null;
   }
 
+  // Is there a question on screen to reveal? The <h2> can be missing entirely
+  // (or sit there empty) while the quiz is still loading its first question.
+  function hasQuestionOnScreen() {
+    const qEl = findQuestionEl();
+    if (!qEl) return false;
+    return !!qEl.textContent.trim() || questionHasImage(qEl);
+  }
+
+  // Continue from a pause: reveal the question and start its countdown.
+  // Returns false when there is nothing to continue to - a click arriving
+  // before the quiz has rendered its first question must not start a
+  // countdown on a screen that still says "Click to start".
   function proceedFromOverlay() {
     const wasNavPause = navPausePending;
+    // The end-of-quiz pause has no question by definition; it's the buttons
+    // that are waiting to be revealed there.
+    if (!wasNavPause && !hasQuestionOnScreen()) {
+      if (DEBUG) console.log('[helloquiz-timer] continue ignored: no question on screen yet');
+      return false;
+    }
     hideReviewOverlay();
     pendingReview = false;
     if (wasNavPause) {
@@ -771,11 +812,12 @@
       // longer relevant on this screen, so stop mirroring it.
       endNavPause();
       resetMirror('');
-      return;
+      return true;
     }
     setMirrorToCurrentQuestion();
     const container = findMapContainer();
     if (container) startTimer(container);
+    return true;
   }
 
   // ---------- Pause before the end-of-quiz buttons (wrong last answer) ----------
@@ -938,10 +980,12 @@
     if (!scriptActive || !navPausePending || !navPauseArmed) return;
     // Clicks on the hint line (display toggle / edit) are interactions with
     // the hint, not a continue gesture - leave them to onHintDisplayClick.
+    // Same for anything in the settings panel.
     if (e.target && e.target.closest &&
         e.target.closest('p.' + HINT_LINE_CLASS + ', [class*="scoreAndHint"]')) {
       return;
     }
+    if (isSettingsTarget(e.target)) return;
     e.stopImmediatePropagation();
     e.preventDefault();
     if (DEBUG) console.log('[helloquiz-timer] nav pause: click -> reveal buttons');
@@ -986,10 +1030,20 @@
   let reviewPointerDown = null;
   let suppressMapClicksUntil = 0;
 
+  // The settings panel is rendered inside the map container, so a click on one
+  // of its controls looks exactly like a tap on the map. Changing a setting is
+  // not a "continue" gesture, so those clicks are left alone. The selector is
+  // deliberately loose: everything the site's settings module renders (panel
+  // and the button that opens it) shares that class prefix.
+  function isSettingsTarget(target) {
+    return !!(target && target.closest &&
+      target.closest('[class*="anki-settings"], .' + SETTINGS_BLOCK_CLASS));
+  }
+
   function onReviewPointerDown(e) {
     if (!overlayEl) return;
     const container = findMapContainer();
-    if (container && container.contains(e.target)) {
+    if (container && container.contains(e.target) && !isSettingsTarget(e.target)) {
       reviewPointerDown = { x: e.clientX, y: e.clientY };
     } else {
       reviewPointerDown = null;
@@ -1038,6 +1092,7 @@
     // a tap-to-continue (the browser fires the click AFTER our pointerup
     // handler has already removed the overlay).
     if (!overlayEl && Date.now() >= suppressMapClicksUntil) return;
+    if (isSettingsTarget(e.target)) return; // the panel sits inside the map
     const container = findMapContainer();
     if (container && container.contains(e.target)) {
       e.stopPropagation();
@@ -2512,7 +2567,13 @@
       saveSettings();
       // If the pause is switched off while a review overlay is up, continue
       // immediately instead of leaving the user stuck on it.
-      if (!reviewPause && overlayEl) proceedFromOverlay();
+      if (!reviewPause && overlayEl && !proceedFromOverlay()) {
+        // No question to continue to yet: drop the overlay anyway, or it would
+        // keep swallowing map clicks. The question starts on its own once the
+        // quiz renders it, since the pause is off now.
+        hideReviewOverlay();
+        pendingReview = false;
+      }
       updateForceClickWarning();
     });
     pauseLabel.appendChild(pauseCheckbox);
