@@ -31,19 +31,6 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 
 > **Note:** The *open … due quizzes* button opens several tabs at once, which browsers block by default. On the first click you will likely get only one tab (or none) plus a "pop-ups blocked" hint in the address bar — **allow pop-ups for helloquiz.app** there and click the button again. The script shows a banner telling you how many tabs were blocked, so you always know it happened.
 
-## Development
-
-The regression suite uses Node's built-in test runner and has no package
-dependencies:
-
-```bash
-npm test
-```
-
-It checks that the userscript parses, that selectors do not pin generated
-CSS-module hashes from a particular helloquiz.app build, and that quiz-list
-discovery stays anchored to learn-mode links.
-
 ## Screenshots
 
 The countdown bar across the top, and the *Anki Turbo Config* options in the quiz's settings panel:
@@ -57,3 +44,16 @@ Keyboard-shortcut badges and labels on the buttons:
 The review pause after a wrong answer, so you can study the map you just missed — it works even on city quizzes:
 
 ![The review pause after a mistake](screenshots/pause.png)
+
+## Development
+
+The regression suite uses Node's built-in test runner and has no package
+dependencies:
+
+```bash
+npm test
+```
+
+It checks that the userscript parses, that selectors do not pin generated
+CSS-module hashes from a particular helloquiz.app build, and that quiz-list
+discovery stays anchored to learn-mode links.
