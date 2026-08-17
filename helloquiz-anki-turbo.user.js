@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.6.5
+// @version      1.6.6
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -535,9 +535,14 @@
         updateForceClickWarning();
         // Also detect quiz/question changes right here (pre-paint) instead
         // of waiting for the 200ms poll: when a grading button swaps in
-        // the next question, the mirror updates in the same frame.
+        // the next question, the mirror updates in the same frame. This is
+        // also what keeps a correct answer's auto-grade click invisible -
+        // watchForGradingButtons reacting only on the 200ms poll left the
+        // real grading buttons on screen for up to 200ms before the
+        // programmatic click, which is long enough to see as a flash.
         watchForQuizChange();
         watchForNewQuestion();
+        watchForGradingButtons();
         watchForNavButtons();
         // After the watchers: the hint sync learns from / enforces against
         // the mirror, which the watchers above may just have updated.
