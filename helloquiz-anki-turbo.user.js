@@ -304,7 +304,11 @@
   const HINT_EDIT_CLASS = 'hq-hint-edit';   // the "edit" action in our fallback hint line
   const QUIZ_LINK_CLASS = 'hq-quiz-link';   // our link to the normal quiz in the title's action list
   const OPEN_DUE_CLASS = 'hq-open-due';     // our "open due quizzes" button above the /learn list
+  const OPEN_DUE_HELP_CLASS = 'hq-open-due-help'; // that button's help badge + text
   const TOAST_CLASS = 'hq-toast';           // transient status banner (e.g. popup blocker warning)
+  const HELP_CLASS = 'hq-help';             // the "?" badge next to a control
+  const HELP_TEXT_CLASS = 'hq-help-text';   // the explanation it toggles
+  const HELP_OPEN_CLASS = 'hq-help-open';   // on both while the explanation is shown
   const MIRROR_ACTIVE_CLASS = 'hq-timer-mirror-active';
   let mirrorActive = false;
 
@@ -428,6 +432,8 @@
       ', .' + TIMER_BAR_CLASS +
       ', .' + SETTINGS_BLOCK_CLASS +
       ', button.' + OPEN_DUE_CLASS +
+      ', .' + HELP_CLASS +
+      ', .' + HELP_TEXT_CLASS +
       ', .' + TOAST_CLASS +
       ', .hq-nav-msg'
     );
@@ -571,7 +577,6 @@
         display: inline-flex;
         align-items: center;
         vertical-align: middle;
-        position: relative;
         margin: 0 0 0 12px;
         padding: 4px 10px;
         border: 1px solid currentColor;
@@ -593,36 +598,57 @@
         opacity: 0.4;
         cursor: default;
       }
-      /* Hover tooltip warning about the pop-up blocker. Uses the toast look
-         and appears instantly, unlike a title attribute - the warning is
-         easy to miss otherwise and the button looks broken without it. Only
-         rendered while the tip attribute is set (i.e. never on the disabled
-         "no quizzes due" state). */
-      button.${OPEN_DUE_CLASS}[data-hq-tip]::after {
-        content: attr(data-hq-tip);
-        position: absolute;
-        top: calc(100% + 6px);
-        left: 0;
-        z-index: 100001;
-        width: max-content;
-        max-width: 260px;
-        padding: 6px 10px;
-        border-radius: 6px;
-        background: rgba(30, 30, 30, 0.95);
-        color: #fff;
-        font-size: 0.8rem;
-        line-height: 1.35;
-        text-align: left;
-        white-space: normal;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-        opacity: 0;
-        visibility: hidden;
-        transition: opacity 0.12s ease;
-        pointer-events: none;
+      /* A "?" badge that toggles a short explanation, used by the config rows
+         and the button above. Click rather than hover: an explanation that
+         pops up while the pointer only passes over a row is more distracting
+         than helpful. The text sits in the normal flow underneath its row
+         rather than floating, so nothing can clip it inside the site's
+         settings panel. Both elements are spans (they live inside <p>s and
+         <h2>s, where a <div> would not be valid). */
+      span.${HELP_CLASS} {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        vertical-align: middle;
+        width: 1.2em;
+        height: 1.2em;
+        margin-left: 6px;
+        border: 1px solid currentColor;
+        border-radius: 50%;
+        font-family: system-ui, sans-serif;
+        font-size: 0.75rem;
+        font-weight: normal;
+        line-height: 1;
+        text-transform: none;
+        letter-spacing: normal;
+        cursor: pointer;
+        opacity: 0.55;
+        user-select: none;
       }
-      button.${OPEN_DUE_CLASS}[data-hq-tip]:hover::after {
+      span.${HELP_CLASS}:hover,
+      span.${HELP_CLASS}.${HELP_OPEN_CLASS} {
         opacity: 1;
-        visibility: visible;
+      }
+      span.${HELP_TEXT_CLASS} {
+        display: none;
+        margin: 4px 0 2px;
+        padding: 5px 8px;
+        border-left: 2px solid currentColor;
+        border-radius: 0 4px 4px 0;
+        /* Grey works out as a slight lightening or darkening of whatever the
+           site's own background is, so this needs no theme handling. */
+        background: rgba(127, 127, 127, 0.15);
+        font-family: system-ui, sans-serif;
+        font-size: 0.8rem;
+        font-weight: normal;
+        line-height: 1.4;
+        text-align: left;
+        text-transform: none;
+        letter-spacing: normal;
+        opacity: 0.85;
+      }
+      span.${HELP_TEXT_CLASS}.${HELP_OPEN_CLASS} {
+        display: block;
       }
     `;
     // Prefer <head> when it exists (more stable across hydration);
@@ -787,6 +813,10 @@
     document.body.appendChild(msg);
   }
 
+  function removeNavPauseMessage() {
+    document.querySelectorAll('.hq-nav-msg').forEach((el) => el.remove());
+  }
+
   // A banner that disappears on its own, for one-off feedback that has no
   // place in the page itself (currently only the popup-blocker warning).
   let toastTimer = null;
@@ -809,8 +839,36 @@
     document.querySelectorAll('.' + TOAST_CLASS).forEach((el) => el.remove());
   }
 
-  function removeNavPauseMessage() {
-    document.querySelectorAll('.hq-nav-msg').forEach((el) => el.remove());
+  // A "?" badge plus the explanation it shows and hides. Returned as a pair
+  // so the caller decides where each one goes; the text is a block, so it
+  // lands under the row the badge sits in.
+  function makeHelp(text) {
+    const badge = document.createElement('span');
+    badge.className = HELP_CLASS;
+    badge.textContent = '?';
+
+    const body = document.createElement('span');
+    body.className = HELP_TEXT_CLASS;
+    body.textContent = text;
+
+    badge.addEventListener('click', (e) => {
+      // The badge sits inside the site's own settings popover; don't let the
+      // click travel on to whatever handlers that has.
+      e.preventDefault();
+      e.stopPropagation();
+      const open = !body.classList.contains(HELP_OPEN_CLASS);
+      body.classList.toggle(HELP_OPEN_CLASS, open);
+      badge.classList.toggle(HELP_OPEN_CLASS, open);
+    });
+
+    return { badge, body };
+  }
+
+  // The common case: badge at the end of a row, explanation right below it.
+  function appendHelp(row, text) {
+    const { badge, body } = makeHelp(text);
+    row.appendChild(badge);
+    row.appendChild(body);
   }
 
   function startNavPause() {
@@ -1882,8 +1940,8 @@
   // its own tab, so a study session starts with exactly the quizzes that need
   // work.
 
-  // Shown on hover (see the CSS above) and worth stating up front: opening
-  // several tabs at once is exactly what pop-up blockers exist for.
+  // Shown by the button's "?" and worth stating up front: opening several
+  // tabs at once is exactly what pop-up blockers exist for.
   const OPEN_DUE_TIP = 'Opens every quiz with overdue questions in its own tab. ' +
     'Browsers block that by default — allow pop-ups for helloquiz.app if not all of them show up.';
 
@@ -1982,14 +2040,38 @@
       : 'open ' + count + ' due ' + (count === 1 ? 'quiz' : 'quizzes');
     if (btn.textContent !== label) btn.textContent = label;
     btn.disabled = count === 0;
-    // Warn about the pop-up blocker before the click rather than after it -
-    // nothing else on the page explains why only one tab opened.
-    if (count === 0) btn.removeAttribute('data-hq-tip');
-    else if (btn.dataset.hqTip !== OPEN_DUE_TIP) btn.dataset.hqTip = OPEN_DUE_TIP;
+    ensureOpenDueHelp(btn);
+  }
+
+  // The "?" next to the button, explaining what it opens and warning about the
+  // pop-up blocker - the reason for a half-opened batch of tabs is worth
+  // knowing before the click, not just after it.
+  function ensureOpenDueHelp(btn) {
+    let badge = document.querySelector('span.' + HELP_CLASS + '.' + OPEN_DUE_HELP_CLASS);
+    let body = document.querySelector('span.' + HELP_TEXT_CLASS + '.' + OPEN_DUE_HELP_CLASS);
+    if (!badge || !body) {
+      // Never leave half a pair behind, or the next pass would keep finding
+      // one of them and skip the rebuild.
+      removeOpenDueHelp();
+      const help = makeHelp(OPEN_DUE_TIP);
+      badge = help.badge;
+      body = help.body;
+      badge.classList.add(OPEN_DUE_HELP_CLASS);
+      body.classList.add(OPEN_DUE_HELP_CLASS);
+    }
+    // Follow the button around: it moves whenever the heading or the table is
+    // re-rendered, and the badge belongs directly after it.
+    if (badge.previousElementSibling !== btn) btn.after(badge);
+    if (body.previousElementSibling !== badge) badge.after(body);
+  }
+
+  function removeOpenDueHelp() {
+    document.querySelectorAll('.' + OPEN_DUE_HELP_CLASS).forEach((el) => el.remove());
   }
 
   function removeOpenDueButton() {
     document.querySelectorAll('button.' + OPEN_DUE_CLASS).forEach((el) => el.remove());
+    removeOpenDueHelp();
   }
 
   // ---------- Nav-button keyboard shortcuts (end-of-quiz screen) ----------
@@ -2037,6 +2119,19 @@
 
   const SETTINGS_BLOCK_CLASS = 'hq-timer-settings-block';
   const FORCECLICK_WARNING_CLASS = 'hq-timer-forceclick-warning';
+
+  // What each row of the config panel actually does - the labels alone are
+  // short enough to be guessed wrong. Shown by the row's "?" (see appendHelp).
+  const TIMER_TIP = 'Counts down on every question. When it runs out, the card is ' +
+    'graded as failed ("again") automatically, so scanning the map for too long ' +
+    'costs you the card. Applies to every quiz that has no override of its own.';
+  const QUIZ_TIMER_TIP = 'Gives the quiz you have open its own countdown, independent ' +
+    'of the default above - handy for quizzes that need noticeably more (or less) ' +
+    'time. Untick it to go back to the default.';
+  const PAUSE_TIP = 'After a wrong answer (or a timeout) the quiz stops on the question ' +
+    'you just missed, so you can study the map before moving on. Click the map or ' +
+    'press 1 to continue. Replaces the site\'s "force correct click", which is broken ' +
+    'on city quizzes.';
 
   function findSiteSettingsContainer() {
     return document.querySelector('[class*="anki-settings-module"]');
@@ -2160,6 +2255,7 @@
     timerP.appendChild(secInput);
     timerP.appendChild(document.createTextNode(' s'));
     timerP.appendChild(defaultNote);
+    appendHelp(timerP, TIMER_TIP);
 
     // Per-quiz override: only shown while a quiz is open. Ticking it gives the
     // current quiz its own duration; unticking drops back to the global
@@ -2228,6 +2324,7 @@
       quizP.appendChild(quizSecInput);
       quizP.appendChild(document.createTextNode(' s'));
       quizP.appendChild(overrideNote);
+      appendHelp(quizP, QUIZ_TIMER_TIP);
       refreshRow();
     }
 
@@ -2248,6 +2345,7 @@
     pauseLabel.appendChild(pauseCheckbox);
     pauseLabel.appendChild(document.createTextNode(' pause after mistakes'));
     pauseP.appendChild(pauseLabel);
+    appendHelp(pauseP, PAUSE_TIP);
 
     // Warning shown only when "force correct click" and pause mode are both on.
     const warning = document.createElement('p');
