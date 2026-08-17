@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.6.3
+// @version      1.6.5
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -102,6 +102,10 @@
   let timerDeadline = 0;      // Date.now() when timer would expire
   let pausedRemaining = null; // seconds left when paused, or null if not paused
   let timerFullSeconds = TIMER_SECONDS; // full duration of the current countdown (the progress-bar denominator); may differ from the global default when the quiz overrides it
+  // The leftover-time fraction for the answer that's about to earn grading
+  // buttons, captured by onAnswerDetected (see there for why) and consumed by
+  // watchForGradingButtons once those buttons actually appear.
+  let pendingAutoGradeFraction = null;
 
   // Does the given quiz title have its own duration override?
   function hasQuizOverride(title) {
@@ -202,6 +206,18 @@
     }
   }
 
+  // The bar's color at a given percent of the countdown remaining, matching
+  // the auto-grade zones (see autoGradeButtonTitle below) so the bar always
+  // previews what an answer right now would earn: still green in the easy
+  // zone, orange once only "good" is left, red once even that's gone.
+  // Applies whether or not auto-grading is actually switched on - the zones
+  // exist either way, this just makes them visible.
+  function timerBarColor(remainingPct) {
+    if (remainingPct >= autoGradeEasy) return '#2ecc40'; // easy
+    if (remainingPct >= autoGradeGood) return 'orange';  // good
+    return 'crimson';                                    // hard
+  }
+
   function runCountdown(container, seconds) {
     // (Re)start the visual + timeout for `seconds` from now.
     clearInterval(timerInterval);
@@ -218,9 +234,7 @@
       const remaining = Math.max(0, (timerDeadline - Date.now()) / 1000);
       const pct = timerFullSeconds > 0 ? (remaining / timerFullSeconds) * 100 : 0;
       timerBar.style.width = pct + '%';
-      if (remaining < timerFullSeconds * 0.3) {
-        timerBar.style.background = 'crimson';
-      }
+      timerBar.style.background = timerBarColor(pct);
       if (remaining <= 0) {
         clearInterval(timerInterval);
       }
@@ -277,7 +291,7 @@
     }
 
     timerBar.style.width = '100%';
-    timerBar.style.background = 'orange';
+    timerBar.style.background = timerBarColor(100);
     timerFullSeconds = effectiveSeconds();
     runCountdown(container, timerFullSeconds);
   }
@@ -1126,6 +1140,12 @@
       }
       if (s === 'correct') {
         if (DEBUG) console.debug('[helloquiz-timer] correct answer detected');
+        // The clock has to be read here, before clearTimer() throws the
+        // countdown away: this console message fires the instant the site
+        // registers the answer, which is BEFORE it renders the grading
+        // buttons into the DOM. By the time watchForGradingButtons notices
+        // those buttons, the timer state used to already be gone.
+        pendingAutoGradeFraction = remainingFraction();
         clearTimer();
         // "Force correct click" mode keeps you on the same card after a
         // wrong click (logging "incorrect", which set pendingReview) and
@@ -1692,6 +1712,7 @@
     navButtonsWerePresent = false;
     timedOut = false;
     buttonsWerePresent = false;
+    pendingAutoGradeFraction = null; // belonged to the old quiz's last answer
     // Drop stale bar references so a fresh one gets created in the new DOM
     removeTimerBar();
     resetMirror('Click to start'); // previous quiz's question is irrelevant now
@@ -1825,8 +1846,11 @@
 
     if (buttonsPresent && !buttonsWerePresent) {
       // Buttons just appeared — the user answered correctly on the map.
-      // Read the clock before clearTimer() throws the countdown away.
-      const leftover = remainingFraction();
+      // The leftover fraction was captured back when the answer was detected
+      // (see onAnswerDetected) — by now clearTimer() below has long since
+      // thrown the actual countdown state away.
+      const leftover = pendingAutoGradeFraction;
+      pendingAutoGradeFraction = null;
       clearTimer();
       if (running && timedOut) {
         markPendingReview('timeout');
