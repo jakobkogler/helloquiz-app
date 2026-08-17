@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.7.0
+// @version      1.7.1
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -27,6 +27,18 @@
   const NAV_SYMBOL_BY_KEY = Object.fromEntries(NAV_BUTTONS.map((b) => [b.key, b.symbol]));
   const PRACTICE_MORE_SYMBOL = NAV_BUTTONS[0].symbol;
   const STORAGE_KEY = 'helloquiz-anki-timer-settings';
+
+  // Next.js CSS-module hashes change whenever helloquiz.app rebuilds a
+  // stylesheet. Match the stable module/local class names instead of a
+  // particular generated hash so routine site deployments do not silently
+  // disable the timer, question mirror, or grading controls.
+  const QUIZ_CONTAINER_SELECTOR = '[class*="quiz-module"][class*="__mapQuiz"]';
+  const MAP_CONTAINER_SELECTOR = '[class*="map-quiz-module"][class*="__map"]';
+  const QUIZ_CONTENT_SELECTOR = '[class*="quiz-module"][class*="__content"]';
+  const QUIZ_TITLE_SELECTOR = '[class*="quiz-module"][class*="__titleText"]';
+  const TITLE_ACTIONS_SELECTOR = '[class*="quiz-module"][class*="__remixButton"]';
+  const GRADING_CONTAINER_SELECTOR =
+    '[class*="generic-quiz-module"][class*="__controlButtonsAnki"]';
 
   // ---------- Persisted settings ----------
 
@@ -192,29 +204,29 @@
   // ---------- DOM finders ----------
 
   function findQuizContainer() {
-    return document.querySelector('.quiz-module__HPadfW__mapQuiz');
+    return document.querySelector(QUIZ_CONTAINER_SELECTOR);
   }
 
   function findMapContainer() {
-    return document.querySelector('.map-quiz-module__gooF1W__map');
+    return document.querySelector(MAP_CONTAINER_SELECTOR);
   }
 
   function findQuestionEl() {
-    return document.querySelector('.quiz-module__HPadfW__content h2:not(.' + MIRROR_CLASS + ')');
+    return document.querySelector(QUIZ_CONTENT_SELECTOR + ' h2:not(.' + MIRROR_CLASS + ')');
   }
 
   function findQuizTitleEl() {
-    return document.querySelector('.quiz-module__HPadfW__titleText');
+    return document.querySelector(QUIZ_TITLE_SELECTOR);
   }
 
   // The bracketed action list next to the title ([remixes / new remix / ...])
   function findTitleActionsEl() {
-    return document.querySelector('.quiz-module__HPadfW__remixButton');
+    return document.querySelector(TITLE_ACTIONS_SELECTOR);
   }
 
   // The container holding the anki grading buttons (again/hard/good/easy)
   function findGradingContainer() {
-    return document.querySelector('.generic-quiz-module__m31QtG__controlButtonsAnki');
+    return document.querySelector(GRADING_CONTAINER_SELECTOR);
   }
 
   function findAgainButton() {
@@ -463,7 +475,7 @@
   let mirrorHTML = null;
 
   function findContentElForMirror() {
-    return document.querySelector('.quiz-module__HPadfW__content');
+    return document.querySelector(QUIZ_CONTENT_SELECTOR);
   }
 
   // A question is an image question when its <h2> contains an <img>.
@@ -636,7 +648,7 @@
   function installHideStyle() {
     const style = document.createElement('style');
     style.textContent = `
-      html.${HIDE_CLASS} .quiz-module__HPadfW__content h2:not(.${MIRROR_CLASS}) {
+      html.${HIDE_CLASS} ${QUIZ_CONTENT_SELECTOR} h2:not(.${MIRROR_CLASS}) {
         display: none !important;
       }
       h2.${MIRROR_CLASS} {
@@ -701,7 +713,11 @@
         display: none !important;
       }
       /* Our fallback hint line borrows the site's own hint class for its
-         look; just make sure the action spans read as clickable. */
+         look when one has been observed. These defaults cover entry points
+         where the site has not rendered a hint line yet. */
+      p.${HINT_LINE_CLASS} {
+        margin: 0;
+      }
       p.${HINT_LINE_CLASS} span {
         cursor: pointer;
       }
@@ -1550,10 +1566,21 @@
   // (React renders each expression as its own text node):
   //   collapsed: "hint: " | <span>display</span> | <span>edit</span>
   //   revealed:  "hint: " | "xyz "               | <span>edit</span>
+  let observedHintClassNames = '';
+
   function findHintEl() {
     // :not() excludes our own fallback line, which borrows the site's hint
     // class for styling (and whose own class contains "hint" too).
-    return document.querySelector('[class*="scoreAndHint"] p[class*="hint"]:not(.' + HINT_LINE_CLASS + ')');
+    const hintEl = document.querySelector(
+      '[class*="scoreAndHint"] p[class*="hint"]:not(.' + HINT_LINE_CLASS + ')'
+    );
+    if (hintEl) {
+      // Remember the live generated class instead of pinning its build hash.
+      observedHintClassNames = Array.from(hintEl.classList)
+        .filter((name) => name.includes('-module__') && name.endsWith('__hint'))
+        .join(' ');
+    }
+    return hintEl;
   }
 
   // Keep the hint line in sync with the question the user actually sees
@@ -1662,7 +1689,10 @@
     let p = existing;
     if (!p) {
       p = document.createElement('p');
-      p.className = HINT_LINE_CLASS + ' generic-quiz-module__m31QtG__hint';
+      p.className = HINT_LINE_CLASS;
+    }
+    if (observedHintClassNames) {
+      p.className = HINT_LINE_CLASS + ' ' + observedHintClassNames;
     }
     if (p.parentElement !== host) host.appendChild(p);
     const hint = questionInfoById[id].hint || '';
@@ -2136,7 +2166,9 @@
   function openQuizListRow(index) {
     // Select by row (each row contains multiple ?learn links: the title
     // and the "anki mode" link both point to the same quiz).
-    const rows = document.querySelectorAll('.learn-module__VSVJQa__table tbody tr');
+    const table = findQuizListTable();
+    if (!table) return false;
+    const rows = table.querySelectorAll('tbody tr');
     const row = rows[index];
     if (!row) return false;
     const link = row.querySelector('a[href*="?learn"]');
@@ -2164,7 +2196,10 @@
   }
 
   function findQuizListTable() {
-    return document.querySelector('.learn-module__VSVJQa__table');
+    // The list's CSS module has been renamed before. Anchor discovery to the
+    // actual learn-mode links instead: their closest table is the quiz list.
+    const learnLink = document.querySelector('table a[href*="?learn"]');
+    return learnLink ? learnLink.closest('table') : null;
   }
 
   // ---------- Open all due quizzes (/learn) ----------
