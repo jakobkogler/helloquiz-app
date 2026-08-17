@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.7.1
+// @version      1.7.3
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -37,6 +37,7 @@
   const QUIZ_CONTENT_SELECTOR = '[class*="quiz-module"][class*="__content"]';
   const QUIZ_TITLE_SELECTOR = '[class*="quiz-module"][class*="__titleText"]';
   const TITLE_ACTIONS_SELECTOR = '[class*="quiz-module"][class*="__remixButton"]';
+  const COMPACT_SETTINGS_TABS_SELECTOR = '[class*="quiz-module"][class*="__compactSettingsTabs"]';
   const GRADING_CONTAINER_SELECTOR =
     '[class*="generic-quiz-module"][class*="__controlButtonsAnki"]';
 
@@ -2384,6 +2385,36 @@
     else location.assign('https://helloquiz.app/learn');
   }
 
+  // ---------- Compact settings tabs (ⓘ / ✖ / ⚙) ----------
+
+  // The compact-mode popover's icon strip: ⓘ info, ✖ close, ⚙ settings.
+  // Clicking ✖ closes the whole popover; clicking the already-selected ⓘ or
+  // ⚙ tab is a no-op on the site's side instead of also closing it, which
+  // reads as the button being stuck. Redirect that click onto the ✖ tab so
+  // re-clicking the active tab closes the popover too, the way a toggle
+  // button normally would.
+  function findTabByGlyph(tabs, glyph) {
+    return Array.from(tabs.children).find((el) => el.textContent.trim() === glyph) || null;
+  }
+
+  function onCompactSettingsTabClick(e) {
+    if (!scriptActive) return;
+    const tabs = e.target && e.target.closest && e.target.closest(COMPACT_SETTINGS_TABS_SELECTOR);
+    if (!tabs) return;
+    const close = findTabByGlyph(tabs, '✖');
+    if (!close) return;
+    // Only redirect a click that lands on a tab OTHER than close itself, and
+    // only when that tab was ALREADY selected before this click - switching
+    // between tabs must behave normally, and clicking close is already
+    // exactly what we're redirecting to.
+    const clickedTab = Array.from(tabs.children).find((el) => el.contains(e.target));
+    if (!clickedTab || clickedTab === close || !clickedTab.classList.contains('selected')) return;
+    e.stopPropagation();
+    e.preventDefault();
+    if (DEBUG) console.log('[helloquiz-timer] re-clicked selected settings tab -> closing');
+    close.click();
+  }
+
   // ---------- Config UI (injected into the site's settings panel) ----------
 
   const SETTINGS_BLOCK_CLASS = 'hq-timer-settings-block';
@@ -2735,6 +2766,7 @@
     document.addEventListener('click', onHintDisplayClick, true);
     document.addEventListener('click', onPossibleNavClick, true);
     document.addEventListener('click', onReviewMapClickBlock, true);
+    document.addEventListener('click', onCompactSettingsTabClick, true);
     document.addEventListener('pointerdown', onNavPausePointerDown, true);
     document.addEventListener('pointerdown', onReviewPointerDown, true);
     document.addEventListener('pointerup', onReviewPointerUp, true);

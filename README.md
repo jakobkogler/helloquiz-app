@@ -17,6 +17,7 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
   - <kbd>Esc</kbd> — jump back to the `/learn` (anki mode) list.
   - <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> open the first / second / third / forth quiz in the list
 - **Auto pause/resume** — the countdown pauses when you switch tabs or the window loses focus, and resumes where it left off when you come back.
+- **Settings popover closes on re-click** — the compact view's icon strip (ⓘ / ✖ / ⚙) normally does nothing when you click the already-active ⓘ or ⚙ tab again; this makes that click close the popover too, the same as clicking ✖.
 
 ## Installation
 
