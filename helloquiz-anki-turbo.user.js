@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.6.6
+// @version      1.7.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -83,6 +83,75 @@
   // out of range.
   function percentOr(value, fallback) {
     return (typeof value === 'number' && value > 0 && value < 100) ? value : fallback;
+  }
+
+  // ---------- Cross-tab settings sync ----------
+
+  // Changing a setting in one tab only writes localStorage there; every other
+  // open tab is still running on the values it loaded at its own page load.
+  // The browser's 'storage' event fires in those OTHER tabs (never the one
+  // that wrote it) whenever the key changes, which is what keeps them in
+  // sync without a reload.
+  function onStorageChange(e) {
+    if (e.key !== STORAGE_KEY || !e.newValue) return;
+    let data;
+    try {
+      data = JSON.parse(e.newValue);
+    } catch (err) {
+      return; // corrupted write from elsewhere - ignore, keep what we have
+    }
+
+    const prevRunning = running;
+    const prevReviewPause = reviewPause;
+    const prevEffectiveSeconds = effectiveSeconds();
+
+    // saveSettings() always writes the full object, so every field is
+    // normally present; the type checks are only a defensive fallback to the
+    // CURRENT value (not the factory default) in case a stray/older write
+    // ever left one out.
+    if (typeof data.seconds === 'number' && data.seconds > 0) TIMER_SECONDS = data.seconds;
+    if (typeof data.running === 'boolean') running = data.running;
+    if (typeof data.reviewPause === 'boolean') reviewPause = data.reviewPause;
+    if (data.perQuizSeconds && typeof data.perQuizSeconds === 'object') perQuizSeconds = data.perQuizSeconds;
+    if (typeof data.autoGrade === 'boolean') autoGrade = data.autoGrade;
+    autoGradeEasy = percentOr(data.autoGradeEasy, autoGradeEasy);
+    autoGradeGood = percentOr(data.autoGradeGood, autoGradeGood);
+    if (autoGradeGood >= autoGradeEasy) {
+      autoGradeEasy = 66;
+      autoGradeGood = 33;
+    }
+
+    if (DEBUG) console.log('[helloquiz-timer] settings synced from another tab');
+
+    // The panel's own poll-driven refresh only rebuilds on a quiz change, so
+    // a remote edit would otherwise sit stale on screen until then. Tear it
+    // down and let the next pass rebuild it from the values just applied.
+    removeSettingsPanel();
+    ensureSettingsPanel();
+    updateForceClickWarning();
+
+    // If the pause was switched off remotely while this tab is sitting on an
+    // overlay, continue immediately instead of leaving it stuck - same as
+    // flipping the checkbox locally.
+    if (!reviewPause && prevReviewPause && overlayEl && !proceedFromOverlay()) {
+      hideReviewOverlay();
+      pendingReview = false;
+    }
+
+    const container = findMapContainer();
+    if (running !== prevRunning) {
+      if (running) {
+        if (container) startTimer(container);
+      } else {
+        clearTimer();
+        timedOut = false;
+        resetBarIdle();
+      }
+    } else if (running && effectiveSeconds() !== prevEffectiveSeconds) {
+      // The duration changed under an already-ticking countdown - restart it
+      // with the new duration, exactly like editing it locally does.
+      if (container) startTimer(container);
+    }
   }
 
   // ---------- State ----------
@@ -2641,6 +2710,7 @@
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('blur', onWindowBlur);
     window.addEventListener('focus', onWindowFocus);
+    window.addEventListener('storage', onStorageChange);
     setInterval(() => {
       // Hidden tab: nothing visible to maintain; the refocus pass in
       // onVisibilityChange catches up when the tab comes back.
