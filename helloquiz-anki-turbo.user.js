@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.4.15
+// @version      1.5.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -303,6 +303,8 @@
   const HINT_LINE_CLASS = 'hq-hint-line';   // our fallback hint line on the end-of-quiz pause screen
   const HINT_EDIT_CLASS = 'hq-hint-edit';   // the "edit" action in our fallback hint line
   const QUIZ_LINK_CLASS = 'hq-quiz-link';   // our link to the normal quiz in the title's action list
+  const OPEN_DUE_CLASS = 'hq-open-due';     // our "open due quizzes" button above the /learn list
+  const TOAST_CLASS = 'hq-toast';           // transient status banner (e.g. popup blocker warning)
   const MIRROR_ACTIVE_CLASS = 'hq-timer-mirror-active';
   let mirrorActive = false;
 
@@ -425,6 +427,8 @@
       ', p.' + HINT_LINE_CLASS +
       ', .' + TIMER_BAR_CLASS +
       ', .' + SETTINGS_BLOCK_CLASS +
+      ', button.' + OPEN_DUE_CLASS +
+      ', .' + TOAST_CLASS +
       ', .hq-nav-msg'
     );
   }
@@ -456,6 +460,7 @@
       try {
         ensureMirror();
         ensureListKbdHints();
+        ensureOpenDueButton();
         ensureNavKbdHints();
         ensureSettingsPanel();
         updateForceClickWarning();
@@ -556,6 +561,68 @@
          look; just make sure the action spans read as clickable. */
       p.${HINT_LINE_CLASS} span {
         cursor: pointer;
+      }
+      /* The "open due quizzes" button next to the /learn list's heading.
+         Borrows the key badge's look (transparent, currentColor border) so it
+         fits whichever theme the site is rendered in. Sitting inside an <h2>,
+         it has to opt out of the heading's own typography - hence the
+         absolute font size and the explicit weight/transform resets. */
+      button.${OPEN_DUE_CLASS} {
+        display: inline-flex;
+        align-items: center;
+        vertical-align: middle;
+        position: relative;
+        margin: 0 0 0 12px;
+        padding: 4px 10px;
+        border: 1px solid currentColor;
+        border-radius: 6px;
+        background: transparent;
+        color: inherit;
+        font-family: inherit;
+        font-size: 0.9rem;
+        font-weight: normal;
+        text-transform: none;
+        letter-spacing: normal;
+        cursor: pointer;
+        opacity: 0.8;
+      }
+      button.${OPEN_DUE_CLASS}:hover:not(:disabled) {
+        opacity: 1;
+      }
+      button.${OPEN_DUE_CLASS}:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      /* Hover tooltip warning about the pop-up blocker. Uses the toast look
+         and appears instantly, unlike a title attribute - the warning is
+         easy to miss otherwise and the button looks broken without it. Only
+         rendered while the tip attribute is set (i.e. never on the disabled
+         "no quizzes due" state). */
+      button.${OPEN_DUE_CLASS}[data-hq-tip]::after {
+        content: attr(data-hq-tip);
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        z-index: 100001;
+        width: max-content;
+        max-width: 260px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        background: rgba(30, 30, 30, 0.95);
+        color: #fff;
+        font-size: 0.8rem;
+        line-height: 1.35;
+        text-align: left;
+        white-space: normal;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.12s ease;
+        pointer-events: none;
+      }
+      button.${OPEN_DUE_CLASS}[data-hq-tip]:hover::after {
+        opacity: 1;
+        visibility: visible;
       }
     `;
     // Prefer <head> when it exists (more stable across hydration);
@@ -693,28 +760,53 @@
     return NAV_BUTTONS.some(({ symbol }) => bySymbol[symbol]);
   }
 
+  // Shared look of the small fixed banners at the top of the screen (the
+  // review-pause hint and the transient toasts).
+  const BANNER_CSS = `
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100001;
+    background: rgba(30, 30, 30, 0.9);
+    color: #fff;
+    font-family: system-ui, sans-serif;
+    font-size: 14px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    user-select: none;
+  `;
+
   function showNavPauseMessage() {
     if (document.querySelector('.hq-nav-msg')) return;
     const msg = document.createElement('div');
     msg.className = 'hq-nav-msg';
     msg.textContent = 'Review the map, then click to continue';
-    msg.style.cssText = `
-      position: fixed;
-      top: 16px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 100001;
-      background: rgba(30, 30, 30, 0.9);
-      color: #fff;
-      font-family: system-ui, sans-serif;
-      font-size: 14px;
-      padding: 8px 14px;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-      cursor: pointer;
-      user-select: none;
-    `;
+    msg.style.cssText = BANNER_CSS + 'cursor: pointer;';
     document.body.appendChild(msg);
+  }
+
+  // A banner that disappears on its own, for one-off feedback that has no
+  // place in the page itself (currently only the popup-blocker warning).
+  let toastTimer = null;
+
+  function showToast(text) {
+    removeToast();
+    const el = document.createElement('div');
+    el.className = TOAST_CLASS;
+    el.textContent = text;
+    el.style.cssText = BANNER_CSS;
+    document.body.appendChild(el);
+    toastTimer = setTimeout(removeToast, 8000);
+  }
+
+  function removeToast() {
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+    document.querySelectorAll('.' + TOAST_CLASS).forEach((el) => el.remove());
   }
 
   function removeNavPauseMessage() {
@@ -1508,6 +1600,8 @@
       showQuestion();
       removeMirror();
       removeListKbdHints();
+      removeOpenDueButton();
+      removeToast();
       removeSettingsPanel();
       removeTimerBar();
     }
@@ -1779,6 +1873,123 @@
 
   function findQuizListTable() {
     return document.querySelector('.learn-module__VSVJQa__table');
+  }
+
+  // ---------- Open all due quizzes (/learn) ----------
+
+  // Only some of the quizzes in the list have cards waiting. One button next
+  // to the list's heading opens every quiz with a non-zero overdue count in
+  // its own tab, so a study session starts with exactly the quizzes that need
+  // work.
+
+  // Shown on hover (see the CSS above) and worth stating up front: opening
+  // several tabs at once is exactly what pop-up blockers exist for.
+  const OPEN_DUE_TIP = 'Opens every quiz with overdue questions in its own tab. ' +
+    'Browsers block that by default — allow pop-ups for helloquiz.app if not all of them show up.';
+
+  // The list's "quizzes" heading. Matched on its own text nodes only: once
+  // the button is inside it, textContent also contains the button's label,
+  // which would stop the heading from matching on the next pass.
+  function findQuizListHeading() {
+    for (const heading of document.querySelectorAll('h1, h2')) {
+      let text = '';
+      heading.childNodes.forEach((node) => {
+        if (node.nodeType === Node.TEXT_NODE) text += node.data;
+      });
+      if (text.trim().toLowerCase() === 'quizzes') return heading;
+    }
+    return null;
+  }
+
+  // Index of the "overdue" column, read from the header so that a column
+  // added on the site's side doesn't silently make us open the wrong quizzes.
+  function overdueColumnIndex(table) {
+    const headers = table.querySelectorAll('thead th');
+    for (let i = 0; i < headers.length; i++) {
+      if (headers[i].textContent.trim().toLowerCase().includes('overdue')) return i;
+    }
+    return 2; // quiz | next question due | overdue | remove
+  }
+
+  // The anki-mode (?learn) URLs of all quizzes with overdue questions.
+  function findDueQuizUrls() {
+    const table = findQuizListTable();
+    if (!table) return [];
+    const col = overdueColumnIndex(table);
+    const urls = [];
+    table.querySelectorAll('tbody tr').forEach((row) => {
+      const cell = row.querySelectorAll('td')[col];
+      if (!cell) return;
+      const overdue = parseInt(cell.textContent.trim(), 10);
+      if (!(overdue > 0)) return;
+      // Every row has several ?learn links (the title and the "anki mode"
+      // action); they all point at the same quiz, so the first one will do.
+      const link = row.querySelector('a[href*="?learn"]');
+      if (link && link.href) urls.push(link.href);
+    });
+    return urls;
+  }
+
+  function openDueQuizzes() {
+    const urls = findDueQuizUrls();
+    if (urls.length === 0) return false;
+    // Open synchronously, directly inside the click/keydown handler. Popup
+    // blockers key off whether window.open() is called within the direct call
+    // stack of a user gesture; anything deferred via setTimeout/promises loses
+    // that context and gets silently blocked after the first tab.
+    let blocked = 0;
+    urls.forEach((url) => {
+      if (!window.open(url, '_blank')) blocked++;
+    });
+    if (DEBUG) console.log('[helloquiz-timer] opened ' + (urls.length - blocked) + '/' + urls.length + ' due quizzes');
+    if (blocked > 0) {
+      showToast(blocked + ' of ' + urls.length + ' tabs were blocked by the browser. ' +
+        'Allow pop-ups for helloquiz.app, then try again.');
+    }
+    return true;
+  }
+
+  function ensureOpenDueButton() {
+    const table = findQuizListTable();
+    if (!table || !table.parentNode) {
+      // Navigating from the list into a quiz keeps the script active, so the
+      // button has to clean itself up once the list is gone.
+      removeOpenDueButton();
+      return;
+    }
+    let btn = document.querySelector('button.' + OPEN_DUE_CLASS);
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = OPEN_DUE_CLASS;
+      btn.addEventListener('click', openDueQuizzes);
+    }
+    // Right of the "quizzes" heading, so it sits where the eye already is
+    // instead of floating alone at the left edge above the table. Re-checked
+    // every pass so a re-rendered heading or table gets the button back.
+    const heading = findQuizListHeading();
+    if (heading) {
+      if (btn.parentNode !== heading) heading.appendChild(btn);
+    } else if (btn.nextElementSibling !== table) {
+      // Unexpected markup: fall back to the top of the table itself.
+      table.parentNode.insertBefore(btn, table);
+    }
+    // The counts change while the list is open (finishing a quiz elsewhere,
+    // a re-sort, a removed quiz), so refresh the label on every pass.
+    const count = findDueQuizUrls().length;
+    const label = count === 0
+      ? 'no quizzes due'
+      : 'open ' + count + ' due ' + (count === 1 ? 'quiz' : 'quizzes');
+    if (btn.textContent !== label) btn.textContent = label;
+    btn.disabled = count === 0;
+    // Warn about the pop-up blocker before the click rather than after it -
+    // nothing else on the page explains why only one tab opened.
+    if (count === 0) btn.removeAttribute('data-hq-tip');
+    else if (btn.dataset.hqTip !== OPEN_DUE_TIP) btn.dataset.hqTip = OPEN_DUE_TIP;
+  }
+
+  function removeOpenDueButton() {
+    document.querySelectorAll('button.' + OPEN_DUE_CLASS).forEach((el) => el.remove());
   }
 
   // ---------- Nav-button keyboard shortcuts (end-of-quiz screen) ----------
@@ -2092,6 +2303,7 @@
 
     invalidateNavScan();
     ensureListKbdHints();
+    ensureOpenDueButton();
     ensureNavKbdHints();
     ensureQuizLink();
     ensureSettingsPanel();

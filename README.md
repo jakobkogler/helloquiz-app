@@ -8,6 +8,7 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 - **Review pause after mistakes** — when you answer wrong (or time out), the quiz pauses on the current card so you can study and learn it before moving on. This replaces the app's own **"force correct click"** mode, which doesn't work correctly for city quizzes — the review pause gives you the same "look at the right answer before continuing" effect on every quiz type.
 - **Adjusted hints** — the hint below the question (and its *display* / *edit* actions) always belongs to the question you actually see, so viewing and changing hints works even in the pause mode and on the grading and end-of-quiz screens.
 - **Link to the normal quiz** — the action list next to the quiz title gets a *normal quiz* link, which opens the same quiz outside of anki mode.
+- **Open all due quizzes at once** — a button next to the *quizzes* heading on `/learn` opens every quiz that has overdue questions in its own tab, so a study session starts with exactly the quizzes that need work. This needs pop-ups to be allowed (see the note below).
 - **Settings** — the quiz's settings panel is extended, so that you can enable/disable the countdown timer, set the timer duration, and enable/disable the review pause. The timer duration defaults to one value for all quizzes, but you can override it per quiz — tick *quiz specific timer countdown* while in a quiz to give just that one its own duration. All settings are remembered across sessions, but stored locally in the browser, so they are not synced across devices.
 - **Keyboard shortcuts** with matching on-screen key badges:
   - <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> — grade the current card (again / hard / good / easy)
@@ -25,6 +26,8 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 > **Note:** This currently works best with the app's **"force correct click"** setting **disabled**. With it enabled the review pause doesn't behave correctly (in particular on city quizzes), so leave it off for now — the review pause covers the same use case.
 
 > **Note:** The script currently only works correctly in the app's **compact** quiz mode. In the full-map mode some parts (e.g. the settings panel additions) don't display properly yet.
+
+> **Note:** The *open … due quizzes* button opens several tabs at once, which browsers block by default. On the first click you will likely get only one tab (or none) plus a "pop-ups blocked" hint in the address bar — **allow pop-ups for helloquiz.app** there and click the button again. The script shows a banner telling you how many tabs were blocked, so you always know it happened.
 
 ## Screenshots
 
