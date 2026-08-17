@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.6.1
+// @version      1.6.3
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -357,7 +357,7 @@
   const HELP_CLASS = 'hq-help';             // the "?" badge next to a control
   const HELP_TEXT_CLASS = 'hq-help-text';   // the explanation it toggles
   const HELP_OPEN_CLASS = 'hq-help-open';   // on both while the explanation is shown
-  const NOTE_CLASS = 'hq-note';             // the dim "(…)" line under a config row
+  const NUM_CLASS = 'hq-num';               // the small seconds / percentage boxes
   const MIRROR_ACTIVE_CLASS = 'hq-timer-mirror-active';
   let mirrorActive = false;
 
@@ -699,13 +699,22 @@
       span.${HELP_TEXT_CLASS}.${HELP_OPEN_CLASS} {
         display: block;
       }
-      /* The "(…)" remark belonging to a config row. On its own line: the rows
-         are long enough that a trailing remark would wrap into the controls. */
-      span.${NOTE_CLASS} {
-        display: block;
-        margin-top: 1px;
-        font-size: 0.85em;
-        opacity: 0.6;
+      /* The seconds/percentage boxes. The browser's spin-button arrows eat
+         into the box's content width without shrinking themselves, so a
+         narrow width clips the digits behind them well before the box looks
+         full - dropping the arrows is what actually lets these go this
+         small. text-align keeps a 1-2 digit value from looking lost in the
+         box, and MozAppearance is Firefox's equivalent of the WebKit rule. */
+      input.${NUM_CLASS} {
+        width: 2.3em;
+        padding: 1px 2px;
+        text-align: center;
+        -moz-appearance: textfield;
+      }
+      input.${NUM_CLASS}::-webkit-outer-spin-button,
+      input.${NUM_CLASS}::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
       }
     `;
     // Prefer <head> when it exists (more stable across hydration);
@@ -940,12 +949,11 @@
     return { badge, body };
   }
 
-  // The common case: badge at the end of the controls, then the row's "(…)"
-  // note and the explanation, both of which are blocks and so stack below.
-  function appendHelp(row, text, note) {
+  // The common case: badge at the end of the controls, explanation below them
+  // (it's a block, so it stacks under the row).
+  function appendHelp(row, text) {
     const { badge, body } = makeHelp(text);
     row.appendChild(badge);
-    if (note) row.appendChild(note);
     row.appendChild(body);
   }
 
@@ -2351,15 +2359,15 @@
     enabledCheckbox.type = 'checkbox';
     enabledCheckbox.checked = running;
     enabledLabel.appendChild(enabledCheckbox);
-    enabledLabel.appendChild(document.createTextNode(' timer countdown '));
+    enabledLabel.appendChild(document.createTextNode(' enable timer countdown '));
 
     const secInput = document.createElement('input');
     secInput.type = 'number';
+    secInput.className = NUM_CLASS;
     secInput.min = '1';
     secInput.step = '1';
     secInput.value = String(TIMER_SECONDS);
     secInput.disabled = !running;
-    secInput.style.width = '4em';
     secInput.addEventListener('change', () => {
       const val = parseFloat(secInput.value);
       if (!isNaN(val) && val > 0) {
@@ -2393,14 +2401,10 @@
       }
     });
 
-    const defaultNote = document.createElement('span');
-    defaultNote.className = NOTE_CLASS;
-    defaultNote.textContent = '(default for all quizzes)';
-
     timerP.appendChild(enabledLabel);
     timerP.appendChild(secInput);
     timerP.appendChild(document.createTextNode(' s'));
-    appendHelp(timerP, TIMER_TIP, defaultNote);
+    appendHelp(timerP, TIMER_TIP);
 
     // Per-quiz override: only shown while a quiz is open. Ticking it gives the
     // current quiz its own duration; unticking drops back to the global
@@ -2414,19 +2418,15 @@
       overrideCheckbox.type = 'checkbox';
       overrideCheckbox.checked = hasQuizOverride(quizTitle);
       overrideLabel.appendChild(overrideCheckbox);
-      overrideLabel.appendChild(document.createTextNode(' quiz specific timer countdown '));
+      overrideLabel.appendChild(document.createTextNode(' quiz timer override '));
 
       const quizSecInput = document.createElement('input');
       quizSecInput.type = 'number';
+      quizSecInput.className = NUM_CLASS;
       quizSecInput.min = '1';
       quizSecInput.step = '1';
       quizSecInput.value = String(hasQuizOverride(quizTitle) ? perQuizSeconds[quizTitle] : TIMER_SECONDS);
       quizSecInput.disabled = !overrideCheckbox.checked;
-      quizSecInput.style.width = '4em';
-
-      const overrideNote = document.createElement('span');
-      overrideNote.className = NOTE_CLASS;
-      overrideNote.textContent = '(override)';
 
       const refreshRow = () => {
         const on = hasQuizOverride(quizTitle);
@@ -2470,7 +2470,7 @@
       quizP.appendChild(overrideLabel);
       quizP.appendChild(quizSecInput);
       quizP.appendChild(document.createTextNode(' s'));
-      appendHelp(quizP, QUIZ_TIMER_TIP, overrideNote);
+      appendHelp(quizP, QUIZ_TIMER_TIP);
       refreshRow();
     }
 
@@ -2483,24 +2483,20 @@
     autoCheckbox.type = 'checkbox';
     autoCheckbox.checked = autoGrade;
     autoLabel.appendChild(autoCheckbox);
-    autoLabel.appendChild(document.createTextNode(' auto-grade by speed '));
+    autoLabel.appendChild(document.createTextNode(' auto-grade by speed: easy '));
 
     const makePercentInput = (value) => {
       const input = document.createElement('input');
       input.type = 'number';
+      input.className = NUM_CLASS;
       input.min = '1';
       input.max = '99';
       input.step = '1';
       input.value = String(value);
-      input.style.width = '3.5em';
       return input;
     };
     const easyInput = makePercentInput(autoGradeEasy);
     const goodInput = makePercentInput(autoGradeGood);
-
-    const autoNote = document.createElement('span');
-    autoNote.className = NOTE_CLASS;
-    autoNote.textContent = '(percentages of the countdown still left)';
 
     // The explanation spells the thresholds out in seconds, so it has to be
     // rebuilt whenever they change.
@@ -2546,13 +2542,11 @@
     });
 
     autoP.appendChild(autoLabel);
-    autoP.appendChild(document.createTextNode('easy '));
     autoP.appendChild(easyInput);
     autoP.appendChild(document.createTextNode(' % / good '));
     autoP.appendChild(goodInput);
     autoP.appendChild(document.createTextNode(' %'));
     autoP.appendChild(autoHelp.badge);
-    autoP.appendChild(autoNote);
     autoP.appendChild(autoHelp.body);
     refreshAutoRow();
 
