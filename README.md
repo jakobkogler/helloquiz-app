@@ -40,21 +40,13 @@ The countdown bar across the top, and the *Anki Turbo Config* options in the qui
 
 ![The countdown timer bar and the Anki Turbo Config settings](screenshots/config-timer.png)
 
-Keyboard-shortcut badges and labels on the buttons:
+Keyboard-shortcut badges and labels on the buttons, including the end-of-quiz *next quiz* (next in line) and *most overdue quiz* buttons:
 
-![Keyboard shortcut hints on the quiz buttons](screenshots/keyboard-shortcuts.png)
+![Keyboard shortcut hints and the next quiz button on the end-of-quiz screen](screenshots/keyboard-shortcuts.png)
 
-The review pause after a wrong answer, so you can study the map you just missed — it works even on city quizzes:
+The review pause after a wrong answer, so you can study the map you just missed — it works even on city quizzes — and the number of cards still left in the quiz:
 
-![The review pause after a mistake](screenshots/pause.png)
-
-The number of cards still left in the quiz, shown while the quiz's popover is closed:
-
-![The cards-left box below the compact settings tabs](screenshots/cards-left.png)
-
-The end-of-quiz buttons, with *next quiz* walking the quiz list in order and *most overdue quiz* jumping back to the top:
-
-![The end-of-quiz buttons with next quiz and most overdue quiz](screenshots/next-quiz.png)
+![The review pause after a mistake and the cards-left box](screenshots/pause.png)
 
 ## Changelog
 
