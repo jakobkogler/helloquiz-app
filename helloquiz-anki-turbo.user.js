@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.8.0
+// @version      1.8.1
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -1290,22 +1290,70 @@
 
   // ---------- Cards left ----------
 
-  // Every anki question-list response is the queue the site is about to
-  // practice: the due and new cards on load and on "practice more", or the
-  // single extra card of the follow-up ?more request when nothing was due.
-  // So each one resets the count to its length. The guess response doesn't
-  // report updated scheduling, so afterwards the count is tracked locally
-  // from the rating: a failed card (1) stays queued, anything else leaves it.
-  // Learning steps can bring a passed card back within the session, which
-  // this can't see - hence the "~" in the display.
-  function countCardsLeft(list) {
-    if (!Array.isArray(list)) return null;
-    return list.filter((q) => q && typeof q === 'object').length;
+  // How many cards are still coming in this quiz session, tracked per card:
+  //  - the batch: cards of the latest anki question-list response (opening
+  //    the quiz, "practice more", or the single card of the follow-up ?more
+  //    request) that haven't been answered yet,
+  //  - plus every answered card whose next appearance has already come -
+  //    each answer schedules its card at now + the interval the grading
+  //    button promised ("again (in 4 min)", "good (in 4 days)", ...).
+  //    A wrong answer on the map shows no buttons; the site then reschedules
+  //    the card in 5 minutes.
+  // The count is re-evaluated on those events only (an answer, a new batch),
+  // not on a clock, so it doesn't jump while a card is on screen. All of it
+  // is per quiz and in memory only: reopening a quiz starts fresh.
+
+  // "again (in 4 min)" / "hard (in 59 sec)" / "easy (next wk)" -> ms, or
+  // null when the label carries no interval this understands.
+  function parseIntervalLabel(text) {
+    const m = /\(\s*(?:in\s+)?(\d+(?:[.,]\d+)?|an?|next)\s*([a-z]+)\.?\s*\)/i.exec(String(text || ''));
+    if (!m) return null;
+    const n = /^\d/.test(m[1]) ? parseFloat(m[1].replace(',', '.')) : 1;
+    const unit = m[2].toLowerCase();
+    const MS = [
+      [/^(s|secs?|seconds?)$/, 1000],
+      [/^(m|mins?|minutes?)$/, 60 * 1000],
+      [/^(h|hrs?|hours?)$/, 60 * 60 * 1000],
+      [/^(d|days?)$/, 24 * 60 * 60 * 1000],
+      [/^(w|wks?|weeks?)$/, 7 * 24 * 60 * 60 * 1000],
+      [/^(mo|mos|months?)$/, 30 * 24 * 60 * 60 * 1000],
+      [/^(y|yrs?|years?)$/, 365 * 24 * 60 * 60 * 1000],
+    ];
+    for (const [re, ms] of MS) if (re.test(unit)) return n * ms;
+    return null;
   }
 
-  function cardsLeftAfterRating(left, rating) {
-    if (left === null || typeof rating !== 'number') return left;
-    return rating >= 2 ? Math.max(0, left - 1) : left;
+  // The tracker state: `batch` holds the unanswered ids of the latest list,
+  // `due` maps each answered id to when it comes back (ms; Infinity when
+  // unknown, i.e. not this session).
+  function newCardTracker() {
+    return { batch: Object.create(null), due: Object.create(null) };
+  }
+
+  function trackCardBatch(tracker, ids) {
+    tracker.batch = Object.create(null);
+    for (const id of ids) {
+      tracker.batch[id] = true;
+      delete tracker.due[id]; // it's back in the queue
+    }
+  }
+
+  // intervalMs: what the clicked grading button promised, or null when no
+  // button was involved (a wrong answer on the map: the site's fixed 5
+  // minutes) or it couldn't be read (a passed card: not this session).
+  function trackCardAnswer(tracker, id, rating, intervalMs, nowMs) {
+    delete tracker.batch[id];
+    let interval = intervalMs;
+    if (interval === null || interval === undefined) {
+      interval = rating === 1 || rating === null || rating === undefined ? 5 * 60 * 1000 : Infinity;
+    }
+    tracker.due[id] = nowMs + interval;
+  }
+
+  function trackedCardsLeft(tracker, nowMs) {
+    let left = Object.keys(tracker.batch).length;
+    for (const id in tracker.due) if (tracker.due[id] <= nowMs) left++;
+    return left;
   }
 
   function ratingFromBody(body) {
@@ -1315,7 +1363,113 @@
     } catch (e) { return null; }
   }
 
+  const QUIZ_ID_RE = /\/api\/quiz\/([^/]+)\/anki\/question/;
+  let cardTracker = newCardTracker();
+  let cardTrackerQuizId = null;
+  // id -> question text, for the log. Kept per tracker (not taken from
+  // questionInfoById, which a single-card ?more response rebuilds).
+  let cardQuestionText = Object.create(null);
   let cardsLeft = null; // null until the quiz's question list has been seen
+
+  // The intervals shown on the grading buttons at the moment one of them
+  // was clicked (by the user, a 1-4 key, auto-grade or the timeout), indexed
+  // by rating. Consumed by the guess request that click sends.
+  let pendingGradeIntervals = null;
+  let pendingGradeIntervalsAt = 0;
+
+  function onGradingButtonClick(e) {
+    const button = e.target && e.target.closest && e.target.closest('button[title]');
+    if (!button || !button.closest(GRADING_CONTAINER_SELECTOR)) return;
+    const intervals = {};
+    button.parentElement.querySelectorAll('button[title]').forEach((b) => {
+      intervals[b.title] = parseIntervalLabel(b.textContent);
+    });
+    pendingGradeIntervals = intervals;
+    pendingGradeIntervalsAt = Date.now();
+  }
+
+  function onCardQueue(url, list) {
+    const m = QUIZ_ID_RE.exec(url || '');
+    const quizId = m ? decodeURIComponent(m[1]) : null;
+    if (quizId !== cardTrackerQuizId) {
+      cardTracker = newCardTracker();
+      cardTrackerQuizId = quizId;
+      cardQuestionText = Object.create(null);
+    }
+    const cards = list.filter((q) => q && typeof q.id === 'string');
+    for (const q of cards) {
+      if (typeof q.question === 'string') cardQuestionText[q.id] = q.question.trim();
+    }
+    trackCardBatch(cardTracker, cards.map((q) => q.id));
+    cardsLeft = trackedCardsLeft(cardTracker, Date.now());
+    logCardTracker('loaded ' + cards.length + ' card' + (cards.length === 1 ? '' : 's') +
+      (quizId ? ' for quiz ' + quizId : ''));
+  }
+
+  function onCardAnswered(id, body) {
+    const rating = ratingFromBody(body);
+    let interval = null;
+    // Only a click from just now belongs to this answer; an older one means
+    // this guess came without buttons (wrong answer on the map).
+    if (pendingGradeIntervals && Date.now() - pendingGradeIntervalsAt < 5000 && rating !== null) {
+      interval = pendingGradeIntervals[String(rating)];
+    }
+    pendingGradeIntervals = null;
+    const now = Date.now();
+    trackCardAnswer(cardTracker, id, rating, interval, now);
+    if (cardsLeft !== null) cardsLeft = trackedCardsLeft(cardTracker, now);
+    logCardTracker('answered ' + id + ' (' + (cardQuestionText[id] || '?') + ') with rating ' +
+      rating + ', ' + (interval === null || interval === undefined
+        ? 'no button interval (default)'
+        : 'button said ' + formatDuration(interval)));
+  }
+
+  function formatDuration(ms) {
+    if (ms === Infinity) return 'not this session';
+    const units = [['d', 86400000], ['h', 3600000], ['min', 60000], ['s', 1000]];
+    for (const [name, size] of units) {
+      if (Math.abs(ms) >= size) return Math.round(ms / size) + ' ' + name;
+    }
+    return '0 s';
+  }
+
+  // One row per tracked card: in the current batch, or when it comes back.
+  function cardTrackerRows() {
+    const now = Date.now();
+    const rows = [];
+    for (const id in cardTracker.batch) {
+      rows.push({ id: id, question: cardQuestionText[id] || '', next: 'in current batch', counted: true });
+    }
+    const scheduled = Object.keys(cardTracker.due).sort((x, y) => cardTracker.due[x] - cardTracker.due[y]);
+    for (const id of scheduled) {
+      const at = cardTracker.due[id];
+      rows.push({
+        id: id,
+        question: cardQuestionText[id] || '',
+        next: at === Infinity ? 'not this session'
+          : new Date(at).toLocaleTimeString() + (at <= now ? ' (due ' + formatDuration(now - at) + ' ago)' : ' (in ' + formatDuration(at - now) + ')'),
+        counted: at <= now,
+      });
+    }
+    return rows;
+  }
+
+  // Only with DEBUG on (the rows aren't even built otherwise), and then on
+  // the console's "Verbose" level. hqCardsDebug() prints the same table on
+  // demand either way.
+  function logCardTracker(event) {
+    if (!DEBUG) return;
+    try {
+      console.debug('[helloquiz-cards] ' + event + ' -> ~' + cardsLeft + ' left', cardTrackerRows());
+    } catch (e) { /* never let logging break the hooks */ }
+  }
+
+  window.hqCardsDebug = function () {
+    console.log('[helloquiz-cards] quiz ' + cardTrackerQuizId + ', ~' + cardsLeft + ' left (as of the last answer / load), ' +
+      trackedCardsLeft(cardTracker, Date.now()) + ' counted right now');
+    console.table(cardTrackerRows());
+  };
+
 
   const ANKI_QUESTIONS_RE = /\/api\/quiz\/[^/]+\/anki\/question(?:\?|$)/;
   const GUESS_RE = /\/api\/game\/[^/]+\/question\/([^/]+)\/guess(?:\?|$)/;
@@ -1363,7 +1517,6 @@
     // same-named question (displayedQuestionId matches by question text).
     for (const key in questionInfoById) delete questionInfoById[key];
     for (const q of list) rememberQuestion(q);
-    cardsLeft = countCardsLeft(list);
   }
 
   // The guess response carries the NEXT question the site just preloaded -
@@ -1460,7 +1613,7 @@
           const m = url.match(GUESS_RE);
           if (m) {
             lastAnsweredQuestionId = decodeURIComponent(m[1]);
-            cardsLeft = cardsLeftAfterRating(cardsLeft, ratingFromBody(init && init.body));
+            onCardAnswered(lastAnsweredQuestionId, init && init.body);
           }
         } else if (method === 'PUT') {
           const m = url.match(HINT_RE);
@@ -1483,7 +1636,10 @@
         resPromise.then((res) => {
           try {
             res.clone().json().then((data) => {
-              if (data && Array.isArray(data.message)) rememberQuestions(data.message);
+              if (data && Array.isArray(data.message)) {
+                rememberQuestions(data.message);
+                onCardQueue(url, data.message);
+              }
             }).catch(() => {});
           } catch (e) { /* response not clonable/JSON - ignore */ }
         }, () => {});
@@ -1529,7 +1685,7 @@
           const m = (this._hqUrl || '').match(GUESS_RE);
           if (m) {
             lastAnsweredQuestionId = decodeURIComponent(m[1]);
-            cardsLeft = cardsLeftAfterRating(cardsLeft, ratingFromBody(body));
+            onCardAnswered(lastAnsweredQuestionId, body);
             this.addEventListener('load', () => {
               try {
                 rememberNextQuestion(JSON.parse(this.responseText));
@@ -1542,7 +1698,10 @@
           this.addEventListener('load', () => {
             try {
               const data = JSON.parse(this.responseText);
-              if (data && Array.isArray(data.message)) rememberQuestions(data.message);
+              if (data && Array.isArray(data.message)) {
+                rememberQuestions(data.message);
+                onCardQueue(this._hqUrl, data.message);
+              }
             } catch (e) { /* not JSON - ignore */ }
           });
         }
@@ -2561,9 +2720,9 @@
     'on city quizzes.';
 
   const CARDS_TIP = 'While the quiz info / settings popover is closed (the \u2716 tab), ' +
-    'shows roughly how many cards are still coming in this quiz. Failed cards stay in ' +
-    'the count; the "~" is there because a card you pass can still come back for ' +
-    'another learning step.';
+    'shows roughly how many cards are still coming in this quiz. Each answered card is ' +
+    'counted again once the interval its grading button showed has passed (5 minutes ' +
+    'for a wrong answer on the map). Starts fresh when you reopen the quiz.';
 
   function findSiteSettingsContainer() {
     return document.querySelector('[class*="anki-settings-module"]');
@@ -2904,6 +3063,7 @@
     document.addEventListener('click', onPossibleNavClick, true);
     document.addEventListener('click', onReviewMapClickBlock, true);
     document.addEventListener('click', onCompactSettingsTabClick, true);
+    document.addEventListener('click', onGradingButtonClick, true);
     document.addEventListener('pointerdown', onNavPausePointerDown, true);
     document.addEventListener('pointerdown', onReviewPointerDown, true);
     document.addEventListener('pointerup', onReviewPointerUp, true);
