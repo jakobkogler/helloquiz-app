@@ -131,3 +131,27 @@ test('chooseNextQuiz starts over from the live list at the end', () => {
   // nothing overdue anywhere
   assert.deepEqual(chooseNextQuiz(order, [q('A', 0)], 'D'), { id: null, order: [q('A', 0)] });
 });
+
+test('SCRIPT_VERSION and UPDATE_URL match the userscript header', () => {
+  const header = (name) => source.match(new RegExp(`^// @${name}\\s+(\\S+)`, 'm'))[1];
+  assert.equal(source.match(/const SCRIPT_VERSION = '([^']+)'/)[1], header('version'));
+  assert.equal(source.match(/const UPDATE_URL = '([^']+)'/)[1], header('updateURL'));
+});
+
+test('compareVersions compares numerically, part by part', () => {
+  const { compareVersions } = load('compareVersions');
+  assert.equal(compareVersions('1.10.0', '1.9.0'), 1);
+  assert.equal(compareVersions('1.9.0', '1.10.0'), -1);
+  assert.equal(compareVersions('1.9.1', '1.9.0'), 1);
+  assert.equal(compareVersions('2.0', '1.99.99'), 1);
+  assert.equal(compareVersions('1.9', '1.9.0'), 0);
+  assert.equal(compareVersions('1.9.0', '1.9.0'), 0);
+});
+
+test('parseScriptVersion reads @version from a published script', () => {
+  const { parseScriptVersion } = load('parseScriptVersion');
+  assert.equal(parseScriptVersion(source), source.match(/^\/\/ @version\s+(\S+)/m)[1]);
+  assert.equal(parseScriptVersion('// ==UserScript==\n// @version      2.0.1\n'), '2.0.1');
+  assert.equal(parseScriptVersion('<html>404</html>'), null);
+  assert.equal(parseScriptVersion(null), null);
+});

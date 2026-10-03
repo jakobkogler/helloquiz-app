@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.9.0
+// @version      1.10.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -16,6 +16,11 @@
   'use strict';
 
   const DEBUG = false;
+  // Must match @version above (a test checks); compared against the
+  // published script to tell whether an update is available.
+  const SCRIPT_VERSION = '1.10.0';
+  const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
+  const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
   // the DOM and the keyboard shortcut bound to it. Single source of truth
   // for click detection, keyboard handling, and the kbd badges.
@@ -3186,6 +3191,113 @@
     updateForceClickWarning();
   }
 
+  // ---------- Update notice (on /learn) ----------
+
+  // The userscript manager updates from @updateURL on its own schedule, and
+  // silently. Check the published script every 3 hours as well, and say so
+  // on the quiz list when a newer version is out. Never inside a quiz.
+  // The check time is shared by all tabs (localStorage); a version the user
+  // dismissed stays quiet until an even newer one comes out.
+  const UPDATE_STATE_KEY = 'hq-update-check';
+  const UPDATE_CHECK_INTERVAL_MS = 3 * 60 * 60 * 1000;
+  const UPDATE_BANNER_CLASS = 'hq-update-banner';
+  let updateCheckInFlight = false;
+
+  function parseScriptVersion(text) {
+    const m = /^\/\/\s*@version\s+(\S+)/m.exec(String(text || ''));
+    return m ? m[1] : null;
+  }
+
+  // Numeric, part by part: 1.10.0 > 1.9.0. Missing parts count as 0.
+  function compareVersions(a, b) {
+    const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d !== 0) return d > 0 ? 1 : -1;
+    }
+    return 0;
+  }
+
+  function loadUpdateState() {
+    try {
+      const data = JSON.parse(localStorage.getItem(UPDATE_STATE_KEY) || 'null');
+      if (data && typeof data === 'object') return data;
+    } catch (e) { /* corrupted or unavailable */ }
+    return {};
+  }
+
+  function saveUpdateState(state) {
+    try {
+      localStorage.setItem(UPDATE_STATE_KEY, JSON.stringify(state));
+    } catch (e) { /* not critical */ }
+  }
+
+  function checkForUpdate() {
+    updateCheckInFlight = true;
+    // Record the attempt first, so a failing check doesn't retry every pass
+    // (nor in every other tab).
+    saveUpdateState(Object.assign(loadUpdateState(), { checkedAt: Date.now() }));
+    fetch(UPDATE_URL + '?t=' + Date.now(), { cache: 'no-store' })
+      .then((res) => (res.ok ? res.text() : null))
+      .then((text) => {
+        const latest = parseScriptVersion(text);
+        if (latest) saveUpdateState(Object.assign(loadUpdateState(), { latest: latest }));
+        if (DEBUG) console.log('[helloquiz-timer] update check: latest', latest, 'installed', SCRIPT_VERSION);
+      })
+      .catch(() => { /* offline etc. - try again next interval */ })
+      .then(() => { updateCheckInFlight = false; });
+  }
+
+  function removeUpdateBanner() {
+    document.querySelectorAll('.' + UPDATE_BANNER_CLASS).forEach((el) => el.remove());
+  }
+
+  function ensureUpdateNotice() {
+    if (location.pathname !== '/learn') {
+      removeUpdateBanner();
+      return;
+    }
+    const state = loadUpdateState();
+    if (!updateCheckInFlight && !(Date.now() - (state.checkedAt || 0) < UPDATE_CHECK_INTERVAL_MS)) {
+      checkForUpdate();
+    }
+    const show = !!state.latest && compareVersions(state.latest, SCRIPT_VERSION) > 0 &&
+      state.dismissed !== state.latest;
+    if (!show) {
+      removeUpdateBanner();
+      return;
+    }
+    if (document.querySelector('.' + UPDATE_BANNER_CLASS)) return;
+
+    const banner = document.createElement('div');
+    banner.className = UPDATE_BANNER_CLASS;
+    banner.style.cssText = BANNER_CSS + 'user-select: text;';
+    const link = (text, href) => {
+      const a = document.createElement('a');
+      a.textContent = text;
+      a.href = href;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.style.cssText = 'color: #9cf; margin-left: 10px;';
+      return a;
+    };
+    banner.appendChild(document.createTextNode(
+      'Anki Turbo ' + state.latest + ' is available (you have ' + SCRIPT_VERSION + ').'));
+    // Opening the raw script makes the userscript manager offer the update.
+    banner.appendChild(link('update', UPDATE_URL));
+    banner.appendChild(link('changelog', CHANGELOG_URL));
+    const dismiss = link('dismiss', '#');
+    dismiss.removeAttribute('target');
+    dismiss.addEventListener('click', (e) => {
+      e.preventDefault();
+      saveUpdateState(Object.assign(loadUpdateState(), { dismissed: state.latest }));
+      removeUpdateBanner();
+    });
+    banner.appendChild(dismiss);
+    document.body.appendChild(banner);
+  }
+
   // ---------- Init ----------
 
   function init() {
@@ -3228,6 +3340,7 @@
     invalidateNavScan();
     ensureListKbdHints();
     ensureOpenDueButton();
+    ensureUpdateNotice();
     ensureNavKbdHints();
     ensureQuizLink();
     ensureSettingsPanel();

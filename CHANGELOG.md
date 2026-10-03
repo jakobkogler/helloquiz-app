@@ -3,6 +3,12 @@
 All notable changes to the HelloQuiz Anki Turbo userscript, newest first,
 grouped by minor version (each section includes its patch releases).
 
+## 1.10 — 2026-10-03
+
+- **Update notice**: every 3 hours the script checks the published version,
+  and the `/learn` quiz list shows a banner when a newer one is available
+  (with *update*, *changelog* and *dismiss*). Never shown inside a quiz.
+
 ## 1.9 — 2026-10-03
 
 - New **next quiz** button (key <kbd>3</kbd>) on the end-of-quiz screen. It
