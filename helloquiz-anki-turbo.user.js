@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.8.1
+// @version      1.8.2
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -1460,12 +1460,12 @@
   function logCardTracker(event) {
     if (!DEBUG) return;
     try {
-      console.debug('[helloquiz-cards] ' + event + ' -> ~' + cardsLeft + ' left', cardTrackerRows());
+      console.debug('[helloquiz-cards] ' + event + ' -> ' + cardsLeft + ' left', cardTrackerRows());
     } catch (e) { /* never let logging break the hooks */ }
   }
 
   window.hqCardsDebug = function () {
-    console.log('[helloquiz-cards] quiz ' + cardTrackerQuizId + ', ~' + cardsLeft + ' left (as of the last answer / load), ' +
+    console.log('[helloquiz-cards] quiz ' + cardTrackerQuizId + ', ' + cardsLeft + ' left (as of the last answer / load), ' +
       trackedCardsLeft(cardTracker, Date.now()) + ' counted right now');
     console.table(cardTrackerRows());
   };
@@ -2624,7 +2624,7 @@
 
   function cardsLeftText() {
     if (cardsLeft === null) return 'no card data yet';
-    return '~' + cardsLeft + (cardsLeft === 1 ? ' card left' : ' cards left');
+    return cardsLeft + (cardsLeft === 1 ? ' card left' : ' cards left');
   }
 
   // The site's popover is a wrapper right next to the tab strip whose class
@@ -2720,7 +2720,7 @@
     'on city quizzes.';
 
   const CARDS_TIP = 'While the quiz info / settings popover is closed (the \u2716 tab), ' +
-    'shows roughly how many cards are still coming in this quiz. Each answered card is ' +
+    'shows how many cards are still coming in this quiz. Each answered card is ' +
     'counted again once the interval its grading button showed has passed (5 minutes ' +
     'for a wrong answer on the map). Starts fresh when you reopen the quiz.';
 
