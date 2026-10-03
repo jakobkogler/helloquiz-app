@@ -52,6 +52,10 @@ The number of cards still left in the quiz, shown while the quiz's popover is cl
 
 ![The cards-left box below the compact settings tabs](screenshots/cards-left.png)
 
+The end-of-quiz buttons, with *next quiz* walking the quiz list in order and *most overdue quiz* jumping back to the top:
+
+![The end-of-quiz buttons with next quiz and most overdue quiz](screenshots/next-quiz.png)
+
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
