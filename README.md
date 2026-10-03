@@ -17,6 +17,7 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
   - <kbd>Esc</kbd> — jump back to the `/learn` (anki mode) list.
   - <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> open the first / second / third / forth quiz in the list
 - **Auto pause/resume** — the countdown pauses when you switch tabs or the window loses focus, and resumes where it left off when you come back.
+- **Cards left** — while the compact view's popover is closed (the ✖ tab, the default when a quiz opens), a small box shows roughly how many cards are still coming in the quiz, e.g. `~12 cards left`; opening ⓘ or ⚙ replaces it as usual. The count is reset from every batch of cards the quiz loads (on opening it, on *practice more*, and the single extra card it fetches when nothing is due) and drops when you grade a card *hard* / *good* / *easy*; a failed card stays in the queue. The `~` is there because a passed card can still return for another learning step. Can be turned off in the settings (*show cards left*).
 - **Settings popover closes on re-click** — the compact view's icon strip (ⓘ / ✖ / ⚙) normally does nothing when you click the already-active ⓘ or ⚙ tab again; this makes that click close the popover too, the same as clicking ✖.
 
 ## Installation
@@ -44,6 +45,10 @@ Keyboard-shortcut badges and labels on the buttons:
 The review pause after a wrong answer, so you can study the map you just missed — it works even on city quizzes:
 
 ![The review pause after a mistake](screenshots/pause.png)
+
+The number of cards still left in the quiz, shown while the quiz's popover is closed:
+
+![The cards-left box below the compact settings tabs](screenshots/cards-left.png)
 
 ## Development
 

@@ -53,7 +53,13 @@ Notable fields:
   one and takes precedence.
 
 The userscript reads this response (via its fetch/XHR hooks) to build its
-question-id → hint map.
+question-id → hint map, and takes the list's length as the number of cards
+left.
+
+The same request is made again by *practice more* on the end-of-quiz screen.
+If that returns no cards, the site follows up with
+`GET /api/quiz/{quizId}/anki/question?more`, which has the same response shape
+but a `message` list holding a single question.
 
 ## POST `/api/game/{playId}/question/{questionId}/guess`
 

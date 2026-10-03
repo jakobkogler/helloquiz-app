@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.7.3
+// @version      1.8.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -61,6 +61,7 @@
         autoGrade: autoGrade,
         autoGradeEasy: autoGradeEasy,
         autoGradeGood: autoGradeGood,
+        showCardsLeft: showCardsLeft,
       }));
     } catch (e) { /* storage unavailable - not critical */ }
   }
@@ -91,6 +92,9 @@
     autoGradeEasy = 66;
     autoGradeGood = 33;
   }
+
+  // Show the "cards left" tab in the compact settings popover.
+  let showCardsLeft = typeof saved.showCardsLeft === 'boolean' ? saved.showCardsLeft : true;
 
   // A stored percentage of the countdown, or the default when it's missing or
   // out of range.
@@ -127,6 +131,7 @@
     if (typeof data.reviewPause === 'boolean') reviewPause = data.reviewPause;
     if (data.perQuizSeconds && typeof data.perQuizSeconds === 'object') perQuizSeconds = data.perQuizSeconds;
     if (typeof data.autoGrade === 'boolean') autoGrade = data.autoGrade;
+    if (typeof data.showCardsLeft === 'boolean') showCardsLeft = data.showCardsLeft;
     autoGradeEasy = percentOr(data.autoGradeEasy, autoGradeEasy);
     autoGradeGood = percentOr(data.autoGradeGood, autoGradeGood);
     if (autoGradeGood >= autoGradeEasy) {
@@ -614,6 +619,7 @@
         ensureOpenDueButton();
         ensureNavKbdHints();
         ensureSettingsPanel();
+        ensureCardsPopover();
         updateForceClickWarning();
         // Also detect quiz/question changes right here (pre-paint) instead
         // of waiting for the 200ms poll: when a grading button swaps in
@@ -1282,6 +1288,35 @@
   //    id of hint edits (PUT /api/question/<id>/hint) to the answered
   //    question. See docs/helloquiz-api.md for the endpoints.
 
+  // ---------- Cards left ----------
+
+  // Every anki question-list response is the queue the site is about to
+  // practice: the due and new cards on load and on "practice more", or the
+  // single extra card of the follow-up ?more request when nothing was due.
+  // So each one resets the count to its length. The guess response doesn't
+  // report updated scheduling, so afterwards the count is tracked locally
+  // from the rating: a failed card (1) stays queued, anything else leaves it.
+  // Learning steps can bring a passed card back within the session, which
+  // this can't see - hence the "~" in the display.
+  function countCardsLeft(list) {
+    if (!Array.isArray(list)) return null;
+    return list.filter((q) => q && typeof q === 'object').length;
+  }
+
+  function cardsLeftAfterRating(left, rating) {
+    if (left === null || typeof rating !== 'number') return left;
+    return rating >= 2 ? Math.max(0, left - 1) : left;
+  }
+
+  function ratingFromBody(body) {
+    try {
+      const data = typeof body === 'string' ? JSON.parse(body) : null;
+      return data && typeof data.rating === 'number' ? data.rating : null;
+    } catch (e) { return null; }
+  }
+
+  let cardsLeft = null; // null until the quiz's question list has been seen
+
   const ANKI_QUESTIONS_RE = /\/api\/quiz\/[^/]+\/anki\/question(?:\?|$)/;
   const GUESS_RE = /\/api\/game\/[^/]+\/question\/([^/]+)\/guess(?:\?|$)/;
   const HINT_RE = /\/api\/question\/([^/]+)\/hint(?:\?|$)/;
@@ -1328,6 +1363,7 @@
     // same-named question (displayedQuestionId matches by question text).
     for (const key in questionInfoById) delete questionInfoById[key];
     for (const q of list) rememberQuestion(q);
+    cardsLeft = countCardsLeft(list);
   }
 
   // The guess response carries the NEXT question the site just preloaded -
@@ -1422,7 +1458,10 @@
 
         if (method === 'POST') {
           const m = url.match(GUESS_RE);
-          if (m) lastAnsweredQuestionId = decodeURIComponent(m[1]);
+          if (m) {
+            lastAnsweredQuestionId = decodeURIComponent(m[1]);
+            cardsLeft = cardsLeftAfterRating(cardsLeft, ratingFromBody(init && init.body));
+          }
         } else if (method === 'PUT') {
           const m = url.match(HINT_RE);
           if (m) {
@@ -1490,6 +1529,7 @@
           const m = (this._hqUrl || '').match(GUESS_RE);
           if (m) {
             lastAnsweredQuestionId = decodeURIComponent(m[1]);
+            cardsLeft = cardsLeftAfterRating(cardsLeft, ratingFromBody(body));
             this.addEventListener('load', () => {
               try {
                 rememberNextQuestion(JSON.parse(this.responseText));
@@ -2415,6 +2455,81 @@
     close.click();
   }
 
+  // ---------- Cards-left box ----------
+
+  // While the compact popover is closed (the site's ✖ tab selected - the
+  // default on every page load), show how many cards are left in a box of
+  // our own (own element, own class names) where the popover would be. The
+  // site's tabs and popover are never touched; ⓘ / ⚙ simply replace the box.
+  const CARDS_POPOVER_CLASS = 'hq-cards-popover';
+
+  function cardsLeftText() {
+    if (cardsLeft === null) return 'no card data yet';
+    return '~' + cardsLeft + (cardsLeft === 1 ? ' card left' : ' cards left');
+  }
+
+  // The site's popover is a wrapper right next to the tab strip whose class
+  // ends in "Selected" (infoSelected / settingsSelected / closedSelected).
+  // Matched by that readable ending, not the generated hash.
+  function findSitePopover(tabs) {
+    const parent = tabs.parentElement;
+    if (!parent) return null;
+    return Array.from(parent.children).find((el) => el !== tabs &&
+      Array.from(el.classList).some((c) => c.startsWith('quiz-module') && /Selected$/.test(c))) || null;
+  }
+
+  function removeCardsPopover() {
+    document.querySelectorAll('.' + CARDS_POPOVER_CLASS).forEach((el) => el.remove());
+  }
+
+  // Styled like the site's own popover content (its info block, and the
+  // description paragraph inside it) - at a fixed, narrower width, so the box
+  // doesn't resize with the count - copied as inline styles so nothing
+  // aimed at the site's classes affects ours.
+  const CARDS_POPOVER_CSS = 'position: fixed; z-index: 3; right: 10px; ' +
+    'top: calc(var(--top-height) + 30px); display: block; width: 180px; ' +
+    'max-width: min(50%, 500px); max-height: calc(100% - 150px); margin: 0; ' +
+    'background: var(--bg); color: var(--text); ' +
+    'border: 1px solid var(--hl); border-radius: 10px; ' +
+    'font-family: Twemoji Country Flags, Inter, Inter Fallback; transition: all .2s ease-in-out;';
+  const CARDS_POPOVER_TEXT_CSS = 'margin: 5px auto; max-width: 100%; text-align: center; ' +
+    'white-space: wrap; text-overflow: clip; overflow: auto;';
+
+  function renderCardsPopover(tabs) {
+    let popover = document.querySelector('.' + CARDS_POPOVER_CLASS);
+    if (!popover) {
+      popover = document.createElement('div');
+      popover.className = CARDS_POPOVER_CLASS;
+      popover.setAttribute('style', CARDS_POPOVER_CSS);
+      const text = document.createElement('p');
+      text.className = 'hq-cards-popover-text';
+      text.setAttribute('style', CARDS_POPOVER_TEXT_CSS);
+      popover.appendChild(text);
+      if (tabs.parentElement) tabs.parentElement.insertBefore(popover, tabs.nextSibling);
+    }
+    const text = popover.firstChild;
+    if (text.textContent !== cardsLeftText()) text.textContent = cardsLeftText();
+  }
+
+  function ensureCardsPopover() {
+    const tabs = document.querySelector(COMPACT_SETTINGS_TABS_SELECTOR);
+    if (!tabs) {
+      removeCardsPopover();
+      return;
+    }
+    // Closed: the site's wrapper says so, or (should its class ever change)
+    // the ✖ tab is the selected one.
+    const wrapper = findSitePopover(tabs);
+    const close = findTabByGlyph(tabs, '✖');
+    const closed = (!!wrapper && /closedSelected$/.test(wrapper.className.trim())) ||
+      (!!close && close.classList.contains('selected'));
+    if (scriptActive && showCardsLeft && closed) {
+      renderCardsPopover(tabs);
+    } else {
+      removeCardsPopover();
+    }
+  }
+
   // ---------- Config UI (injected into the site's settings panel) ----------
 
   const SETTINGS_BLOCK_CLASS = 'hq-timer-settings-block';
@@ -2444,6 +2559,11 @@
     'you just missed, so you can study the map before moving on. Click the map or ' +
     'press 1 to continue. Replaces the site\'s "force correct click", which is broken ' +
     'on city quizzes.';
+
+  const CARDS_TIP = 'While the quiz info / settings popover is closed (the \u2716 tab), ' +
+    'shows roughly how many cards are still coming in this quiz. Failed cards stay in ' +
+    'the count; the "~" is there because a card you pass can still come back for ' +
+    'another learning step.';
 
   function findSiteSettingsContainer() {
     return document.querySelector('[class*="anki-settings-module"]');
@@ -2739,6 +2859,22 @@
     pauseP.appendChild(pauseLabel);
     appendHelp(pauseP, PAUSE_TIP);
 
+    // Show the cards-left tab in the compact popover's strip
+    const cardsP = document.createElement('p');
+    const cardsLabel = document.createElement('label');
+    const cardsCheckbox = document.createElement('input');
+    cardsCheckbox.type = 'checkbox';
+    cardsCheckbox.checked = showCardsLeft;
+    cardsCheckbox.addEventListener('change', () => {
+      showCardsLeft = cardsCheckbox.checked;
+      saveSettings();
+      ensureCardsPopover();
+    });
+    cardsLabel.appendChild(cardsCheckbox);
+    cardsLabel.appendChild(document.createTextNode(' show cards left'));
+    cardsP.appendChild(cardsLabel);
+    appendHelp(cardsP, CARDS_TIP);
+
     // Warning shown only when "force correct click" and pause mode are both on.
     const warning = document.createElement('p');
     warning.className = FORCECLICK_WARNING_CLASS;
@@ -2751,6 +2887,7 @@
     if (currentQuizTitle) block.appendChild(quizP);
     block.appendChild(autoP);
     block.appendChild(pauseP);
+    block.appendChild(cardsP);
     block.appendChild(warning);
     container.appendChild(block);
     updateForceClickWarning();
@@ -2800,6 +2937,7 @@
     ensureNavKbdHints();
     ensureQuizLink();
     ensureSettingsPanel();
+    ensureCardsPopover();
     updateForceClickWarning();
     ensureHideStyle();
     hideQuestion(); // re-assert the <html> class in case it was stripped
