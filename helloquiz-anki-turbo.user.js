@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.8.2
+// @version      1.9.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -22,8 +22,11 @@
   const NAV_BUTTONS = [
     { key: '1', symbol: '▶' }, // practice more (continues in the same quiz)
     { key: '2', symbol: '⇋' }, // select quiz
-    { key: '3', symbol: '→' }, // next quiz
+    { key: '3', symbol: '⇥' }, // next quiz in the remembered order (our own button)
+    { key: '4', symbol: '→' }, // most overdue quiz (the site's "next quiz")
   ];
+  const NEXT_QUIZ_SYMBOL = '⇥';
+  const MOST_OVERDUE_SYMBOL = '→';
   const NAV_SYMBOL_BY_KEY = Object.fromEntries(NAV_BUTTONS.map((b) => [b.key, b.symbol]));
   const PRACTICE_MORE_SYMBOL = NAV_BUTTONS[0].symbol;
   const STORAGE_KEY = 'helloquiz-anki-timer-settings';
@@ -693,8 +696,8 @@
       }
       /* End-of-quiz nav buttons: show the full text label (which the site
          collapses to just a glyph on the map view) and hide the bare
-         ▶/⇋/→ symbol, so they read "practice more" / "select quiz" /
-         "next quiz". */
+         ▶/⇋/⇥/→ symbol, so they read "practice more" / "select quiz" /
+         "next quiz" / "most overdue quiz". */
       [class*="controlButtonsAnki"] button [class*="expanded"] {
         display: inline !important;
       }
@@ -1364,6 +1367,7 @@
   }
 
   const QUIZ_ID_RE = /\/api\/quiz\/([^/]+)\/anki\/question/;
+  const ANKI_QUIZZES_RE = /\/api\/quiz\/anki(?:\?|$)/;
   let cardTracker = newCardTracker();
   let cardTrackerQuizId = null;
   // id -> question text, for the log. Kept per tracker (not taken from
@@ -1643,6 +1647,14 @@
             }).catch(() => {});
           } catch (e) { /* response not clonable/JSON - ignore */ }
         }, () => {});
+      } else if (method === 'GET' && ANKI_QUIZZES_RE.test(url)) {
+        resPromise.then((res) => {
+          try {
+            res.clone().json().then((data) => {
+              if (data && Array.isArray(data.message)) onAnkiQuizList(data.message);
+            }).catch(() => {});
+          } catch (e) { /* response not clonable/JSON - ignore */ }
+        }, () => {});
       } else if (method === 'POST' && GUESS_RE.test(url)) {
         resPromise.then((res) => {
           try {
@@ -1702,6 +1714,13 @@
                 rememberQuestions(data.message);
                 onCardQueue(this._hqUrl, data.message);
               }
+            } catch (e) { /* not JSON - ignore */ }
+          });
+        } else if (this._hqMethod === 'GET' && ANKI_QUIZZES_RE.test(this._hqUrl || '')) {
+          this.addEventListener('load', () => {
+            try {
+              const data = JSON.parse(this.responseText);
+              if (data && Array.isArray(data.message)) onAnkiQuizList(data.message);
             } catch (e) { /* not JSON - ignore */ }
           });
         }
@@ -2306,11 +2325,15 @@
     // ⇋ select quiz, → next quiz), matching their 1/2/3 shortcuts.
     // When the buttons aren't on the page, this is a cheap no-op; their
     // badges disappear together with the buttons themselves.
+    ensureNextQuizButton();
     NAV_BUTTONS.forEach(({ key, symbol }) => {
       const btn = findNavButtonBySymbol(symbol);
       if (!btn) return;
-      if (!btn.querySelector('kbd.' + KBD_CLASS)) {
+      const kbd = btn.querySelector('kbd.' + KBD_CLASS);
+      if (!kbd) {
         prependKbd(btn, key);
+      } else if (kbd.textContent !== key) {
+        kbd.textContent = key; // the site's → moved from 3 to 4
       }
       // Wrap the bare symbol glyph (e.g. "▶") in a span so CSS can hide it,
       // leaving only the text label visible. The glyph stays in the DOM
@@ -2543,6 +2566,117 @@
     removeOpenDueHelp();
   }
 
+  // ---------- Next quiz in line (end-of-quiz screen) ----------
+
+  // The site's → goes to the MOST overdue quiz, i.e. always back to the top
+  // of its priority list (GET /api/quiz/anki). Our "next quiz" button walks
+  // that list in order instead (#2, #3, #4, ...). Finishing a quiz moves it
+  // far down the live list, so the order is remembered as it was when the
+  // walk started: every list fetched on /learn, or the first one seen when
+  // there is none yet. Kept in sessionStorage - it has to survive the page
+  // loads between quizzes, and is per tab.
+  const NEXT_QUIZ_ORDER_KEY = 'hq-next-quiz-order';
+  const NEXT_QUIZ_CLASS = 'hq-next-quiz';
+  let liveQuizList = null; // the latest /api/quiz/anki response, normalized
+
+  function normalizeQuizList(list) {
+    return (list || [])
+      .filter((q) => q && typeof q.id === 'string' && !q.deletedAt)
+      .map((q) => ({ id: q.id, title: q.title || '', overdueCount: Number(q.overdueCount) || 0 }));
+  }
+
+  // The quiz to go to after `currentId`: the next one in the remembered
+  // `order` that (per the live list, else per its remembered count) still
+  // has overdue cards. When there is none, start over from the live list:
+  // it becomes the new order, and the pick is its first overdue quiz other
+  // than the current one. Returns { id (or null), order (to remember) }.
+  function chooseNextQuiz(order, live, currentId) {
+    const liveCount = Object.create(null);
+    for (const q of live || []) liveCount[q.id] = q.overdueCount;
+    const isOverdue = (q) => (q.id in liveCount ? liveCount[q.id] : q.overdueCount) > 0;
+    const index = (order || []).findIndex((q) => q.id === currentId);
+    if (index !== -1) {
+      const next = order.slice(index + 1).find((q) => q.id !== currentId && isOverdue(q));
+      if (next) return { id: next.id, order: order };
+    }
+    if (!live || !live.length) return { id: null, order: order || [] };
+    const first = live.find((q) => q.id !== currentId && isOverdue(q));
+    return { id: first ? first.id : null, order: live };
+  }
+
+  function loadNextQuizOrder() {
+    try {
+      const data = JSON.parse(sessionStorage.getItem(NEXT_QUIZ_ORDER_KEY) || 'null');
+      return Array.isArray(data) ? data : null;
+    } catch (e) { return null; }
+  }
+
+  function saveNextQuizOrder(order) {
+    try {
+      sessionStorage.setItem(NEXT_QUIZ_ORDER_KEY, JSON.stringify(order));
+    } catch (e) { /* storage unavailable - the walk just restarts each page */ }
+  }
+
+  function onAnkiQuizList(list) {
+    liveQuizList = normalizeQuizList(list);
+    if (location.pathname === '/learn' || !loadNextQuizOrder()) saveNextQuizOrder(liveQuizList);
+  }
+
+  function currentQuizId() {
+    const m = /^\/quiz\/([^/]+)/.exec(location.pathname);
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+
+  function goToNextQuiz() {
+    const { id, order } = chooseNextQuiz(loadNextQuizOrder(), liveQuizList, currentQuizId());
+    saveNextQuizOrder(order);
+    if (DEBUG) console.log('[helloquiz-timer] next quiz ->', id);
+    if (!id) {
+      showToast('No other quiz has overdue cards right now.');
+      return;
+    }
+    location.assign('/quiz/' + encodeURIComponent(id) + '?learn');
+  }
+
+  // Our button is a copy of the site's → button (same look), put right
+  // before it, with its own glyph (how the nav detection tells them apart)
+  // and label. The site's → is relabelled "most overdue quiz". Both are
+  // re-asserted on every pass in case the site re-renders.
+  function ensureNextQuizButton() {
+    const mostOverdue = findNavButtonBySymbol(MOST_OVERDUE_SYMBOL);
+    if (!mostOverdue) return;
+    const label = mostOverdue.querySelector('[class*="expanded"]');
+    if (label && label.textContent !== 'most overdue quiz') label.textContent = 'most overdue quiz';
+
+    const parent = mostOverdue.parentElement;
+    if (!parent) return;
+    let next = parent.querySelector(':scope > button.' + NEXT_QUIZ_CLASS);
+    if (!next) {
+      next = mostOverdue.cloneNode(true);
+      next.classList.add(NEXT_QUIZ_CLASS);
+      next.querySelectorAll('kbd.' + KBD_CLASS).forEach((el) => el.remove());
+      const nextLabel = next.querySelector('[class*="expanded"]');
+      if (nextLabel) nextLabel.textContent = 'next quiz';
+      // Swap the → glyph, whether it's still a bare text node or already
+      // wrapped for hiding (ensureNavKbdHints).
+      const walker = document.createTreeWalker(next, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.data.includes(MOST_OVERDUE_SYMBOL)) node.data = node.data.replace(MOST_OVERDUE_SYMBOL, NEXT_QUIZ_SYMBOL);
+      }
+      next.addEventListener('click', (e) => {
+        e.preventDefault();
+        goToNextQuiz();
+      });
+      invalidateNavScan();
+    }
+    if (next.nextElementSibling !== mostOverdue) parent.insertBefore(next, mostOverdue);
+    // A grid sized for the site's three buttons gets a fourth column.
+    for (const cls of Array.from(parent.classList)) {
+      const wider = cls.replace(/__buttons_3$/, '__buttons_4');
+      if (wider !== cls && !parent.classList.contains(wider)) parent.classList.add(wider);
+    }
+  }
+
   // ---------- Nav-button keyboard shortcuts (end-of-quiz screen) ----------
 
   function findNavButtonBySymbol(symbol) {
@@ -2558,7 +2692,7 @@
     const symbol = NAV_SYMBOL_BY_KEY[e.key];
     if (!symbol) return;
     if (overlayEl) return; // overlay's own "1" handling takes priority
-    if (e.key === '1' && findAgainButton()) return; // grading takes priority
+    if ((e.key === '1' || e.key === '4') && findAgainButton()) return; // grading takes priority
 
     invalidateNavScan(); // key events run outside a watcher pass - rescan
     const button = findNavButtonBySymbol(symbol);

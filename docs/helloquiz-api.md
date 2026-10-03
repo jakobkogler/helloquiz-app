@@ -6,6 +6,34 @@ site — they can change without notice. All requests are same-origin and
 authenticated by the normal session cookies; no extra headers are needed
 beyond what the browser sends anyway.
 
+## GET `/api/quiz/anki`
+
+The user's anki quizzes in priority order (most overdue first). Fetched by the
+site regularly, on `/learn` and while in a quiz.
+
+```json
+{
+  "error": false,
+  "message": [
+    {
+      "id": "FrG2k08jXzk5",
+      "deletedAt": null,
+      "title": "Bangladesh subdivisions (lvl2): districts in Bengali",
+      "due": 0,
+      "overdueCount": "45",
+      "hasStarted": true
+    }
+  ]
+}
+```
+
+- `overdueCount` — overdue cards, as a string.
+- `due` — a timestamp in ms (the list is sorted by it); its exact meaning
+  isn't pinned down.
+
+The userscript remembers this order (as of `/learn`) for its *next quiz*
+button, and uses the latest response for the current overdue counts.
+
 ## GET `/api/quiz/{quizId}/anki/question`
 
 Returns the anki (spaced-repetition) state of every question in the quiz,

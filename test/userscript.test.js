@@ -97,3 +97,37 @@ test('ratingFromBody reads the rating from a guess request body', () => {
   assert.equal(ratingFromBody('not json'), null);
   assert.equal(ratingFromBody(undefined), null);
 });
+
+test('chooseNextQuiz walks the remembered order, not the live one', () => {
+  const { chooseNextQuiz } = load('chooseNextQuiz');
+  const q = (id, overdueCount) => ({ id, title: id, overdueCount });
+  const order = [q('A', 45), q('B', 1), q('C', 2), q('D', 1), q('E', 0)];
+
+  // B was finished and dropped to the end of the live list: still C next.
+  const live = [q('A', 45), q('C', 2), q('D', 1), q('E', 0), q('B', 0)];
+  assert.deepEqual(chooseNextQuiz(order, live, 'B'), { id: 'C', order });
+  assert.equal(chooseNextQuiz(order, live, 'C').id, 'D');
+
+  // a quiz the live list says is done meanwhile is skipped
+  const liveCDone = [q('A', 45), q('D', 1), q('B', 0), q('C', 0)];
+  assert.equal(chooseNextQuiz(order, liveCDone, 'B').id, 'D');
+
+  // without a live list, the remembered counts decide
+  assert.equal(chooseNextQuiz(order, null, 'A').id, 'B');
+});
+
+test('chooseNextQuiz starts over from the live list at the end', () => {
+  const { chooseNextQuiz } = load('chooseNextQuiz');
+  const q = (id, overdueCount) => ({ id, title: id, overdueCount });
+  const order = [q('A', 45), q('B', 1), q('C', 2), q('D', 1)];
+  const live = [q('A', 30), q('C', 0), q('B', 0), q('D', 0), q('F', 3)];
+
+  // D was last in line: the live list becomes the new order
+  assert.deepEqual(chooseNextQuiz(order, live, 'D'), { id: 'A', order: live });
+  // never the current quiz itself
+  assert.equal(chooseNextQuiz(order, live, 'A').id, 'F');
+  // a quiz outside the remembered order starts over too
+  assert.deepEqual(chooseNextQuiz(order, live, 'X'), { id: 'A', order: live });
+  // nothing overdue anywhere
+  assert.deepEqual(chooseNextQuiz(order, [q('A', 0)], 'D'), { id: null, order: [q('A', 0)] });
+});
