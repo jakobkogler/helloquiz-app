@@ -1,9 +1,16 @@
 # Changelog
 
-All notable changes to the HelloQuiz Anki Turbo userscript, newest first,
-grouped by minor version (each section includes its patch releases).
+All notable changes to the HelloQuiz Anki Turbo userscript, newest first.
+From 1.10.0 on, every version has its own section; older releases are
+grouped by minor version (each including its patch releases).
 
-## 1.10 — 2026-10-03
+## 1.10.1 — 2026-10-03
+
+- Fixed *next quiz* saying no quiz is overdue at the end of the list instead
+  of starting over (e.g. with the first quiz you skipped): it now fetches the
+  current quiz list itself when clicked.
+
+## 1.10.0 — 2026-10-03
 
 - **Update notice**: every 3 hours the script checks the published version,
   and the `/learn` quiz list shows a banner when a newer one is available

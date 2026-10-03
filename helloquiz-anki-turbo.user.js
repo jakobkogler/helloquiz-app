@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.10.0
+// @version      1.10.1
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -18,7 +18,7 @@
   const DEBUG = false;
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
-  const SCRIPT_VERSION = '1.10.0';
+  const SCRIPT_VERSION = '1.10.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
@@ -2632,15 +2632,32 @@
     return m ? decodeURIComponent(m[1]) : null;
   }
 
+  // Asks for a fresh quiz list first: the site doesn't fetch it on a quiz
+  // page loaded directly (which is how this button navigates), so without
+  // that there'd be no live list to start over from at the end of the order.
+  // Falls back to the last list seen when the request fails.
+  let goingToNextQuiz = false;
+
   function goToNextQuiz() {
-    const { id, order } = chooseNextQuiz(loadNextQuizOrder(), liveQuizList, currentQuizId());
-    saveNextQuizOrder(order);
-    if (DEBUG) console.log('[helloquiz-timer] next quiz ->', id);
-    if (!id) {
-      showToast('No other quiz has overdue cards right now.');
-      return;
-    }
-    location.assign('/quiz/' + encodeURIComponent(id) + '?learn');
+    if (goingToNextQuiz) return;
+    goingToNextQuiz = true;
+    fetch('/api/quiz/anki', { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data.message)) liveQuizList = normalizeQuizList(data.message);
+      })
+      .catch(() => { /* use the last list seen */ })
+      .then(() => {
+        goingToNextQuiz = false;
+        const { id, order } = chooseNextQuiz(loadNextQuizOrder(), liveQuizList, currentQuizId());
+        saveNextQuizOrder(order);
+        if (DEBUG) console.log('[helloquiz-timer] next quiz ->', id);
+        if (!id) {
+          showToast('No other quiz has overdue cards right now.');
+          return;
+        }
+        location.assign('/quiz/' + encodeURIComponent(id) + '?learn');
+      });
   }
 
   // Our button is a copy of the site's → button (same look), put right
