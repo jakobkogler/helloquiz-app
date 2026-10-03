@@ -51,6 +51,10 @@ The number of cards still left in the quiz, shown while the quiz's popover is cl
 
 ![The cards-left box below the compact settings tabs](screenshots/cards-left.png)
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
+
 ## Development
 
 The regression suite uses Node's built-in test runner and has no package
