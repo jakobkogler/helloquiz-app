@@ -270,3 +270,40 @@ test('otherOverdueQuizzesText words the second line of the cards-left box', () =
   assert.equal(otherOverdueQuizzesText(0), 'no other overdue quizzes');
   assert.equal(otherOverdueQuizzesText(null), '');
 });
+
+test('formatTimeUntil gives a short rounded duration', () => {
+  const { formatTimeUntil } = load('formatTimeUntil');
+  const MIN = 60 * 1000;
+  assert.equal(formatTimeUntil(45 * 1000), '45 sec');
+  assert.equal(formatTimeUntil(400), '1 sec');
+  assert.equal(formatTimeUntil(4 * MIN), '4 min');
+  assert.equal(formatTimeUntil(4.4 * MIN), '5 min'); // never claims sooner than it is
+  assert.equal(formatTimeUntil(59 * MIN), '59 min');
+  assert.equal(formatTimeUntil(2 * 60 * MIN), '2 h');
+  assert.equal(formatTimeUntil(3 * 24 * 60 * MIN), '3 days');
+  assert.equal(formatTimeUntil(26 * 60 * MIN), '1 day');
+});
+
+test('formatDueTime counts calendar days once the card falls on a later local day', () => {
+  const { formatDueTime } = load('formatTimeUntil', 'formatDueTime');
+  const at = (d, h, m = 0) => new Date(2026, 9, d, h, m).getTime(); // local time, October 2026
+  const now = at(4, 20); // 8 PM
+  assert.equal(formatDueTime(at(4, 23), now), '3 h');        // still today
+  assert.equal(formatDueTime(at(4, 20, 4), now), '4 min');
+  assert.equal(formatDueTime(at(5, 1), now), '1 day');       // 1 AM tomorrow, only 5 hours away
+  assert.equal(formatDueTime(at(5, 23), now), '1 day');
+  assert.equal(formatDueTime(at(7, 9), now), '3 days');
+  assert.equal(formatDueTime(at(4, 0, 30) + 0, at(4, 0, 10)), '20 min'); // just after midnight
+});
+
+test('practicePreviewText words the preview on the practice more button', () => {
+  const { practicePreviewText } = load('formatTimeUntil', 'formatDueTime', 'practicePreviewText');
+  const now = Date.parse('2026-10-04T12:00:00Z');
+  assert.equal(practicePreviewText({ kind: 'due', count: 3 }, now), '3 due now');
+  assert.equal(practicePreviewText({ kind: 'due', count: 1 }, now), '1 due now');
+  assert.equal(practicePreviewText({ kind: 'next', dueMs: now + 4 * 60000 }, now), 'next in 4 min');
+  assert.equal(practicePreviewText({ kind: 'next', dueMs: now - 1000 }, now), 'next due now');
+  assert.equal(practicePreviewText({ kind: 'next', dueMs: null }, now), 'next due now');
+  assert.equal(practicePreviewText({ kind: 'none' }, now), 'no cards left');
+  assert.equal(practicePreviewText(null, now), '');
+});

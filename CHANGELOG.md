@@ -4,6 +4,13 @@ All notable changes to the HelloQuiz Anki Turbo userscript, newest first.
 From 1.10.0 on, every version has its own section; older releases are
 grouped by minor version (each including its patch releases).
 
+## 1.13.0 — 2026-10-04
+
+- The end-of-quiz *practice more* button previews what it brings: *3 due
+  now*, or when the next card comes up (*next in 4 min*, counting down;
+  in calendar days such as *next in 1 day* once it falls on a later day),
+  or *no cards left*.
+
 ## 1.12.0 — 2026-10-04
 
 - The cards-left box also shows how many other quizzes still have overdue

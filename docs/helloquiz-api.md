@@ -125,7 +125,10 @@ from.
 The same request is made again by *practice more* on the end-of-quiz screen.
 If that returns no cards, the site follows up with
 `GET /api/quiz/{quizId}/anki/question?more`, which has the same response shape
-but a `message` list holding a single question.
+but a `message` list holding a single question. That question's `due` is
+when it comes up next; the userscript shows it on the *practice more* button
+before you click (fetched with the browser's original `fetch`, so its own
+hooks don't take the preview for a new batch).
 
 ## POST `/api/game/{playId}/question/{questionId}/guess`
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.12.0
+// @version      1.13.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -18,7 +18,7 @@
   const DEBUG = false;
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
-  const SCRIPT_VERSION = '1.12.0';
+  const SCRIPT_VERSION = '1.13.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
@@ -1538,6 +1538,11 @@
   };
 
 
+  // The browser's own fetch, saved when the hook below replaces it. For
+  // requests whose responses must NOT reach our own hooks (e.g. the
+  // practice-more preview, which would otherwise count as a new batch).
+  let rawFetch = null;
+
   const ANKI_QUESTIONS_RE = /\/api\/quiz\/[^/]+\/anki\/question(?:\?|$)/;
   const GUESS_RE = /\/api\/game\/[^/]+\/question\/([^/]+)\/guess(?:\?|$)/;
   const HINT_RE = /\/api\/question\/([^/]+)\/hint(?:\?|$)/;
@@ -1669,6 +1674,7 @@
 
   function installFetchHook() {
     const origFetch = window.fetch.bind(window);
+    rawFetch = origFetch;
     window.fetch = function (input, init) {
       let url = '';
       let method = 'GET';
@@ -2407,6 +2413,7 @@
     // When the buttons aren't on the page, this is a cheap no-op; their
     // badges disappear together with the buttons themselves.
     ensureNextQuizButton();
+    ensurePracticePreview();
     NAV_BUTTONS.forEach(({ key, symbol }) => {
       const btn = findNavButtonBySymbol(symbol);
       if (!btn) return;
@@ -2773,6 +2780,108 @@
       const wider = cls.replace(/__buttons_3$/, '__buttons_4');
       if (wider !== cls && !parent.classList.contains(wider)) parent.classList.add(wider);
     }
+  }
+
+  // ---------- Practice-more preview (end-of-quiz screen) ----------
+
+  // Before you click "practice more": is anything due right now, or when is
+  // the next card? The same lookup the site makes on that click - the due
+  // cards, or else the single ?more card with its due time - shown on the
+  // button: "practice more · 3 due now" / "· next in 4 min".
+  const PRACTICE_PREVIEW_CLASS = 'hq-practice-preview';
+  let practicePreview = null;        // { kind: 'due', count } | { kind: 'next', dueMs } | { kind: 'none' }
+  let practicePreviewRequested = false;
+  let practicePreviewToken = 0;      // bumped to drop answers that arrive too late
+
+  // Rounded up, so it never claims a card comes sooner than it does.
+  function formatTimeUntil(ms) {
+    const sec = Math.max(1, Math.ceil(ms / 1000));
+    if (sec < 60) return sec + ' sec';
+    const min = Math.ceil(ms / 60000);
+    if (min < 60) return min + ' min';
+    const hours = Math.ceil(ms / 3600000);
+    if (hours < 24) return hours + ' h';
+    const days = Math.max(1, Math.round(ms / 86400000));
+    return days + (days === 1 ? ' day' : ' days');
+  }
+
+  // When the card is due later today (local time): the countdown above.
+  // When it falls on a later day: whole calendar days, however few hours
+  // away - at 8 PM, a card due at 1 AM is "1 day", not "5 h".
+  function formatDueTime(dueMs, nowMs) {
+    const dayStart = (ms) => {
+      const d = new Date(ms);
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    };
+    // Rounded: a DST switch makes a day 23 or 25 hours long.
+    const days = Math.round((dayStart(dueMs) - dayStart(nowMs)) / 86400000);
+    if (days >= 1) return days + (days === 1 ? ' day' : ' days');
+    return formatTimeUntil(dueMs - nowMs);
+  }
+
+  function practicePreviewText(preview, nowMs) {
+    if (!preview) return '';
+    if (preview.kind === 'due') return preview.count + ' due now';
+    if (preview.kind === 'none') return 'no cards left';
+    if (preview.dueMs === null || preview.dueMs <= nowMs) return 'next due now';
+    return 'next in ' + formatDueTime(preview.dueMs, nowMs);
+  }
+
+  function loadPracticePreview() {
+    const quizId = currentQuizId();
+    if (!quizId) return;
+    const token = ++practicePreviewToken;
+    const send = rawFetch || window.fetch.bind(window);
+    const base = '/api/quiz/' + encodeURIComponent(quizId) + '/anki/question';
+    const get = (url) => send(url, { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('HTTP ' + res.status))))
+      .then((data) => {
+        if (!data || data.error !== false || !Array.isArray(data.message)) throw new Error('unexpected response');
+        return data.message;
+      });
+    get(base)
+      .then((due) => {
+        if (due.length) return { kind: 'due', count: due.length };
+        return get(base + '?more').then((more) => {
+          if (!more.length) return { kind: 'none' };
+          const at = more[0] && more[0].due ? Date.parse(more[0].due) : NaN;
+          return { kind: 'next', dueMs: isNaN(at) ? null : at };
+        });
+      })
+      .then((preview) => {
+        if (token === practicePreviewToken) practicePreview = preview;
+      }, () => { /* no preview - the button stays as the site made it */ });
+  }
+
+  // Runs with the other end-screen upkeep; one lookup per appearance of the
+  // buttons, the text re-derived every pass so "next in …" counts down.
+  function ensurePracticePreview() {
+    const button = findNavButtonBySymbol(PRACTICE_MORE_SYMBOL);
+    if (!button) {
+      if (practicePreviewRequested) {
+        practicePreviewRequested = false;
+        practicePreview = null;
+        practicePreviewToken++;
+      }
+      return;
+    }
+    if (!practicePreviewRequested) {
+      practicePreviewRequested = true;
+      loadPracticePreview();
+    }
+    const text = practicePreviewText(practicePreview, Date.now());
+    let span = button.querySelector('span.' + PRACTICE_PREVIEW_CLASS);
+    if (!text) {
+      if (span) span.remove();
+      return;
+    }
+    if (!span) {
+      span = document.createElement('span');
+      span.className = PRACTICE_PREVIEW_CLASS;
+      (button.querySelector('[class*="expanded"]') || button).appendChild(span);
+    }
+    const full = ' \u00b7 ' + text;
+    if (span.textContent !== full) span.textContent = full;
   }
 
   // ---------- Nav-button keyboard shortcuts (end-of-quiz screen) ----------
