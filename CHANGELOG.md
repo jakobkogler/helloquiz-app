@@ -4,6 +4,16 @@ All notable changes to the HelloQuiz Anki Turbo userscript, newest first.
 From 1.10.0 on, every version has its own section; older releases are
 grouped by minor version (each including its patch releases).
 
+## 1.11.0 — 2026-10-04
+
+- **Card browser** at `/quiz/<id>/browse`, linked from every `/learn` row
+  (*browse*) and the quiz title (*browse cards*): all cards of a quiz,
+  searchable by question (image quizzes show thumbnails). For a quiz in
+  your anki deck, each card has a **punish** button that rates it *again*
+  right away.
+- The normal (non-anki) quiz page gets an *anki mode* link next to the
+  quiz title, the counterpart of the anki page's *normal quiz* link.
+
 ## 1.10.1 — 2026-10-03
 
 - Fixed *next quiz* saying no quiz is overdue at the end of the list instead

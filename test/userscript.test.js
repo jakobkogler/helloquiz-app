@@ -155,3 +155,97 @@ test('parseScriptVersion reads @version from a published script', () => {
   assert.equal(parseScriptVersion('<html>404</html>'), null);
   assert.equal(parseScriptVersion(null), null);
 });
+
+test('browseQuizIdFromPath recognizes only the browse route', () => {
+  const { browseQuizIdFromPath } = load('browseQuizIdFromPath');
+  assert.equal(browseQuizIdFromPath('/quiz/dS9lE6vjHuOK/browse'), 'dS9lE6vjHuOK');
+  assert.equal(browseQuizIdFromPath('/quiz/dS9lE6vjHuOK/browse/'), 'dS9lE6vjHuOK');
+  assert.equal(browseQuizIdFromPath('/quiz/dS9lE6vjHuOK/browse/extra'), null);
+  assert.equal(browseQuizIdFromPath('/quiz/dS9lE6vjHuOK'), null);
+  assert.equal(browseQuizIdFromPath('/learn'), null);
+});
+
+test('cardMatchesQuery searches the question loosely', () => {
+  const { cardMatchesQuery } = load('normalizeSearchText', 'cardMatchesQuery');
+  const card = { question: 'Bad Tölz-Wolfratshausen', answer: '11.4,47.7', hint: 'Bayern', customHint: 'Isar' };
+  assert.equal(cardMatchesQuery(card, 'tolz'), true);
+  assert.equal(cardMatchesQuery(card, 'TÖLZ'), true);
+  assert.equal(cardMatchesQuery(card, 'bad wolfrats'), true);
+  assert.equal(cardMatchesQuery(card, '  bad   tolz '), true);
+  assert.equal(cardMatchesQuery(card, 'bad munchen'), false);
+  assert.equal(cardMatchesQuery(card, ''), true);
+  assert.equal(cardMatchesQuery(card, '   '), true);
+  // answers and hints aren't shown, so they don't match either
+  assert.equal(cardMatchesQuery(card, '47.7'), false);
+  assert.equal(cardMatchesQuery(card, 'bayern'), false);
+  assert.equal(cardMatchesQuery(card, 'isar'), false);
+  // API nulls and numbers don't throw
+  assert.equal(cardMatchesQuery({ question: 45, answer: null, hint: null }, '45'), true);
+  assert.equal(cardMatchesQuery({ question: null }, 'x'), false);
+});
+
+test('compareCardsByQuestion sorts naturally', () => {
+  const { compareCardsByQuestion } = load('compareCardsByQuestion');
+  const sorted = [{ question: '10' }, { question: '2' }, { question: 'b' }, { question: 'A' }, { question: null }]
+    .sort(compareCardsByQuestion).map((c) => c.question);
+  assert.deepEqual(sorted, [null, '2', '10', 'A', 'b']);
+});
+
+test('buildPunishRequest rates the card "again" through the guess endpoint', () => {
+  const { buildPunishRequest } = load('buildPunishRequest');
+  const { url, init } = buildPunishRequest('DDZCULBN4Rwf7  ', { id: 'fBz40iFNThz2T', answer: '63' });
+  assert.equal(url, '/api/game/DDZCULBN4Rwf7%20%20/question/fBz40iFNThz2T/guess');
+  assert.equal(init.method, 'POST');
+  assert.equal(init.headers['Content-Type'], 'text/plain;charset=UTF-8');
+  assert.deepEqual(JSON.parse(init.body), { guess: '63', loadId: '', rating: 1 });
+  assert.equal(JSON.parse(buildPunishRequest('p', { id: 'x', answer: null }).init.body).guess, '');
+});
+
+test('shouldSendPunish blocks repeats while pending or done', () => {
+  const { shouldSendPunish } = load('shouldSendPunish');
+  assert.equal(shouldSendPunish(undefined), true);
+  assert.equal(shouldSendPunish({ error: 'x' }), true);
+  assert.equal(shouldSendPunish('pending'), false);
+  assert.equal(shouldSendPunish('done'), false);
+});
+
+test('userscript has no literal combining marks (they break when served without a charset)', () => {
+  assert.equal(/[̀-ͯ]/.test(source), false);
+});
+
+test('isImageQuestion recognizes image cards', () => {
+  const { isImageQuestion } = load('isImageQuestion');
+  assert.equal(isImageQuestion({ question: 'https://i.imgur.com/abc123.png' }), true);
+  assert.equal(isImageQuestion({ question: 'https://cdn.example.com/poles/7?w=200' }), true);
+  assert.equal(isImageQuestion({ question: '//cdn.example.com/a.jpg' }), true);
+  assert.equal(isImageQuestion({ question: '/uploads/sign.webp' }), true);
+  assert.equal(isImageQuestion({ question: 'data:image/png;base64,AAAA' }), true);
+  assert.equal(isImageQuestion({ question: 'whatever', questionFormat: 'image' }), true);
+  assert.equal(isImageQuestion({ question: 'München' }), false);
+  assert.equal(isImageQuestion({ question: '45' }), false);
+  assert.equal(isImageQuestion({ question: 'Bad Tölz / Wolfratshausen' }), false);
+  assert.equal(isImageQuestion({ question: '/not an image' }), false);
+  assert.equal(isImageQuestion({ question: null }), false);
+});
+
+test('normalQuizIdFromLocation recognizes only the normal quiz page', () => {
+  const { normalQuizIdFromLocation } = load('normalQuizIdFromLocation');
+  assert.equal(normalQuizIdFromLocation('/quiz/nUVUMfYMZvop', ''), 'nUVUMfYMZvop');
+  assert.equal(normalQuizIdFromLocation('/quiz/nUVUMfYMZvop/', ''), 'nUVUMfYMZvop');
+  assert.equal(normalQuizIdFromLocation('/quiz/nUVUMfYMZvop', '?learn'), null);
+  assert.equal(normalQuizIdFromLocation('/quiz/nUVUMfYMZvop', '?x=1&learn'), null);
+  assert.equal(normalQuizIdFromLocation('/quiz/nUVUMfYMZvop/browse', ''), null);
+  assert.equal(normalQuizIdFromLocation('/quiz/nUVUMfYMZvop/remixes', ''), null);
+  assert.equal(normalQuizIdFromLocation('/quiz/new', '?remix=nUVUMfYMZvop'), null);
+  assert.equal(normalQuizIdFromLocation('/learn', ''), null);
+});
+
+test('isQuizInDeck tells whether a quiz is in the anki deck list', () => {
+  const { isQuizInDeck } = load('isQuizInDeck');
+  const deck = [{ id: 'A', deletedAt: null }, { id: 'B', deletedAt: '2026-01-01' }];
+  assert.equal(isQuizInDeck(deck, 'A'), true);
+  assert.equal(isQuizInDeck(deck, 'C'), false);
+  assert.equal(isQuizInDeck(deck, 'B'), false); // removed from the deck
+  assert.equal(isQuizInDeck([], 'A'), false);
+  assert.equal(isQuizInDeck(null, 'A'), null); // unknown
+});

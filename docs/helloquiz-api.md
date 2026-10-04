@@ -32,7 +32,45 @@ site regularly, on `/learn` and while in a quiz.
   isn't pinned down.
 
 The userscript remembers this order (as of `/learn`) for its *next quiz*
-button, and uses the latest response for the current overdue counts.
+button, and uses the latest response for the current overdue counts. The
+card browser uses it to tell whether a quiz is in the deck (only then can its
+cards be punished).
+
+## GET `/api/quiz/{quizId}`
+
+The quiz's details (works for any quiz, also without logging in):
+
+```json
+{
+  "error": false,
+  "message": {
+    "id": "nUVUMfYMZvop",
+    "title": "South Africa phone codes (2 digits)",
+    "description": "Can you guess South Africa's 2 digit phone codes?",
+    "creator": { "displayName": "emily", "handle": "emily", "id": 1 },
+    "options": { "geojson": "https://emily.bz/geojson/phone/ZA_2.json" },
+    "type": 2,
+    "remixOf": null
+  }
+}
+```
+
+The card browser takes its heading from `title`.
+
+## GET `/api/quiz/{quizId}/question`
+
+Every card of the quiz (no scheduling state):
+
+```json
+{
+  "error": false,
+  "message": [
+    { "id": "fBz40iFNThz2T", "question": "45", "answer": "63", "hint": null, "customHint": null, "ownedBy": "dS9lE6vjHuOK", "options": {} }
+  ]
+}
+```
+
+Used by the userscript's card browser.
 
 ## GET `/api/quiz/{quizId}/anki/question`
 
@@ -106,6 +144,11 @@ question into the app. From this moment the DOM (question label, hint line,
 hint edit button) belongs to the next question, even though the review pause
 still displays the answered one. The userscript therefore remembers
 `questionId` from this request as "the question currently displayed".
+
+The server accepts a guess for **any** card of the quiz, not just the one
+currently loaded, with the quiz's play id (`play` from the anki question
+list) and an empty `loadId` (verified 2026-10-04). The card browser's
+*punish* sends `{"guess": <answer>, "loadId": "", "rating": 1}` this way.
 
 ## PUT `/api/question/{questionId}/hint`
 

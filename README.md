@@ -8,7 +8,7 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 - **Auto-grade by speed** (off by default) — when a question is answered correctly in time, the card grades itself from how much of the countdown was left, instead of asking you for *hard* / *good* / *easy*. The two thresholds are configurable percentages of the countdown, by default 66% and 33%: with the default 10 second countdown an answer within 3.4s is *easy*, within 6.7s *good*, and anything slower *hard*. Answering too slowly still fails the card as before. Needs the countdown to be enabled.
 - **Review pause after mistakes** — when you answer wrong (or time out), the quiz pauses on the current card so you can study and learn it before moving on. This replaces the app's own **"force correct click"** mode, which doesn't work correctly for city quizzes — the review pause gives you the same "look at the right answer before continuing" effect on every quiz type.
 - **Adjusted hints** — the hint below the question (and its *display* / *edit* actions) always belongs to the question you actually see, so viewing and changing hints works even in the pause mode and on the grading and end-of-quiz screens.
-- **Link to the normal quiz** — the action list next to the quiz title gets a *normal quiz* link, which opens the same quiz outside of anki mode.
+- **Links between the anki and normal quiz** — the action list next to the quiz title gets a *normal quiz* link in anki mode, which opens the same quiz outside of anki mode, and an *anki mode* link on the normal quiz page, which goes the other way.
 - **Open all due quizzes at once** — a button next to the *quizzes* heading on `/learn` opens every quiz that has overdue questions in its own tab, so a study session starts with exactly the quizzes that need work. This needs pop-ups to be allowed (see the note below).
 - **Settings** — the quiz's settings panel is extended, so that you can enable/disable the countdown timer, set the timer duration, enable/disable auto-grading (and its two thresholds), and enable/disable the review pause. The timer duration defaults to one value for all quizzes, but you can override it per quiz — tick *quiz timer override* while in a quiz to give just that one its own duration. Each setting has a **?** next to it that shows a short explanation of what it does. All settings are remembered across sessions and sync instantly to every other helloquiz.app tab open in the same browser, but are stored locally, so they are not synced across devices.
 - **Keyboard shortcuts** with matching on-screen key badges:
@@ -16,6 +16,7 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
   - <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> — end-of-quiz navigation: practice more (`▶`) / select quiz (`⇋`) / next quiz / most overdue quiz (`→`).
   - <kbd>Esc</kbd> — jump back to the `/learn` (anki mode) list.
   - <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> open the first / second / third / forth quiz in the list
+- **Card browser** — a *browse* link on every `/learn` row (and *browse cards* in a quiz's title) opens `/quiz/<id>/browse`: all cards of that quiz, searchable by their question (case and accents don't matter); image quizzes show a small thumbnail of each picture. For a quiz in your anki deck, each card has a **punish** button that rates it *again* right away, so a card you just found out you forgot — say an area code while playing GeoGuessr — comes back in your next review.
 - **Update notice** — every 3 hours the script checks the published version on GitHub, and when a newer one is out, the `/learn` quiz list shows a banner with links to *update* (your userscript manager then offers the new version), the *changelog*, and *dismiss* (hides it until an even newer version). It never shows inside a quiz.
 - **Auto pause/resume** — the countdown pauses when you switch tabs or the window loses focus, and resumes where it left off when you come back.
 - **Next quiz in line** — the end-of-quiz screen gets a *next quiz* button (key <kbd>3</kbd>) that works through the anki quiz list in order: start with the second quiz, and it takes you to the third, fourth, … The site's own button, which always goes back to the most overdue quiz, stays as *most overdue quiz* (key <kbd>4</kbd>). The order is the list as it was on `/learn` (finished quizzes drop down the live list, so it isn't followed directly); quizzes without overdue cards by now are skipped, and once the end is reached it starts over from the current list.
@@ -47,6 +48,10 @@ Keyboard-shortcut badges and labels on the buttons, including the end-of-quiz *n
 The review pause after a wrong answer, so you can study the map you just missed — it works even on city quizzes — and the number of cards still left in the quiz:
 
 ![The review pause after a mistake and the cards-left box](screenshots/pause.png)
+
+The card browser, where you can search a quiz's cards and punish the ones you forgot:
+
+![The card browser with its search box and punish buttons](screenshots/card-browser.png)
 
 ## Changelog
 

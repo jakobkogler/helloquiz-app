@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.10.1
+// @version      1.11.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -18,7 +18,7 @@
   const DEBUG = false;
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
-  const SCRIPT_VERSION = '1.10.1';
+  const SCRIPT_VERSION = '1.11.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
@@ -452,6 +452,7 @@
   const HIDE_CLASS = 'hq-timer-hide-question';
   const MIRROR_CLASS = 'hq-timer-mirror';
   const KBD_CLASS = 'hq-timer-kbd'; // must be declared before installHideStyle() runs at document-start
+  const BROWSE_HTML_CLASS = 'hq-browse-page'; // on <html> while the card browser is shown; declared before installHideStyle() runs
   const NAVSYM_CLASS = 'hq-timer-navsym'; // wraps the ▶/⇋/→ glyph so we can hide it via CSS
   const NAV_HIDE_CLASS = 'hq-nav-hide';   // hides end-of-quiz nav buttons during the pause
   const TIMER_BAR_CLASS = 'hq-timer-bar'; // marks the injected timer bar (for the mutation filter)
@@ -835,6 +836,62 @@
         -webkit-appearance: none;
         margin: 0;
       }
+      /* The card browser (/quiz/<id>/browse) replaces the site's 404, whose
+         own inline style forces a white page; keep the site's colors. */
+      html.${BROWSE_HTML_CLASS} body {
+        background: var(--bg, #f0f0ff) !important;
+        color: var(--text, #222) !important;
+      }
+      .hq-browse {
+        max-width: var(--max-width, 1200px);
+        margin: 20px auto 40px;
+        padding: 0 16px;
+      }
+      .hq-browse h1 { margin: 0 0 4px; font-size: 24px; }
+      .hq-browse .hq-browse-search {
+        width: 100%;
+        max-width: 420px;
+        font-size: 16px;
+        padding: 6px 10px;
+        border: 1px solid var(--hl, #95f);
+        border-radius: 8px;
+        background: var(--bg, #fff);
+        color: var(--text, #222);
+      }
+      .hq-browse .hq-browse-count { margin-left: 8px; opacity: 0.7; }
+      .hq-browse .hq-browse-explain { max-width: 900px; margin: 8px 0 14px; opacity: 0.85; line-height: 1.4; }
+      .hq-browse .hq-browse-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 0 24px;
+        margin-top: 8px;
+      }
+      .hq-browse .hq-browse-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--bg-minishade, #e0e0ff);
+      }
+      .hq-browse .hq-browse-question { min-width: 0; overflow-wrap: anywhere; }
+      .hq-browse .hq-browse-action { flex: none; text-align: right; }
+      .hq-browse button {
+        border: 1px solid var(--hl, #95f);
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text, #222);
+        padding: 2px 10px;
+        cursor: pointer;
+      }
+      .hq-browse button:disabled { opacity: 0.6; cursor: default; }
+      .hq-browse img.hq-browse-image {
+        display: block;
+        max-width: 160px;
+        max-height: 64px;
+        border-radius: 4px;
+      }
+      .hq-browse .hq-browse-error { color: var(--warning-shade, #c33); }
     `;
     // Prefer <head> when it exists (more stable across hydration);
     // fall back to <html> at document-start when head isn't there yet.
@@ -1970,9 +2027,27 @@
     // The title survives SPA navigation between quizzes, so keep the target
     // pointing at whichever quiz is currently open.
     if (link.getAttribute('href') !== href) link.setAttribute('href', href);
+    // ... and one to this quiz's card browser right after it.
+    const quizId = currentQuizId();
+    if (!quizId) return;
+    let browse = actions.querySelector('a.' + BROWSE_LINK_CLASS);
+    if (!browse) {
+      browse = document.createElement('a');
+      browse.className = BROWSE_LINK_CLASS;
+      browse.textContent = 'browse cards';
+      actions.insertBefore(browse, link.nextSibling);
+      actions.insertBefore(document.createTextNode(' / '), browse);
+    }
+    const browseHref = '/quiz/' + encodeURIComponent(quizId) + '/browse';
+    if (browse.getAttribute('href') !== browseHref) browse.setAttribute('href', browseHref);
   }
 
   function removeQuizLink() {
+    document.querySelectorAll(TITLE_ACTIONS_SELECTOR + ' a.' + BROWSE_LINK_CLASS).forEach((el) => {
+      const sep = el.previousSibling;
+      if (sep && sep.nodeType === Node.TEXT_NODE && sep.textContent === ' / ') sep.remove();
+      el.remove();
+    });
     document.querySelectorAll('a.' + QUIZ_LINK_CLASS).forEach((el) => {
       // Drop the separator we added along with the link.
       const sep = el.nextSibling;
@@ -3315,6 +3390,384 @@
     document.body.appendChild(banner);
   }
 
+  // ---------- Card browser ----------
+
+  // /quiz/<id>/browse: a page of our own (the site serves its 404 there)
+  // that lists a quiz's cards, searches them and can "punish" any card -
+  // rate it again (1) right away, so anki brings it back soon. Found you
+  // forgot an area code while playing elsewhere? Look it up, punish it.
+
+  function browseQuizIdFromPath(pathname) {
+    const m = /^\/quiz\/([^/]+)\/browse\/?$/.exec(String(pathname || ''));
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+
+  // Lower case, accents removed: "München" -> "munchen".
+  function normalizeSearchText(text) {
+    return String(text === null || text === undefined ? '' : text)
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  }
+
+  // Every word of the query has to appear in the question. Answers and
+  // hints aren't searched (nor shown): they're mostly geojson references or
+  // coordinates, so matching them would turn up cards for no visible reason.
+  function cardMatchesQuery(card, query) {
+    const words = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+    if (!words.length) return true;
+    const question = normalizeSearchText(card.question);
+    return words.every((word) => question.includes(word));
+  }
+
+  // Image quizzes keep the picture's URL in the question. Shown as a
+  // thumbnail instead of the URL: anything the format marks as an image,
+  // and any single-token absolute URL, data: image or image path.
+  function isImageQuestion(card) {
+    if (typeof card.questionFormat === 'string' && /image/i.test(card.questionFormat)) return true;
+    const q = String(card.question === null || card.question === undefined ? '' : card.question).trim();
+    if (!q || /\s/.test(q)) return false;
+    if (/^data:image\//i.test(q) || /^(https?:)?\/\//i.test(q)) return true;
+    return /^\/\S+\.(png|jpe?g|gif|webp|svg|avif)(\?\S*)?$/i.test(q);
+  }
+
+  // Natural order: "2" before "10".
+  function compareCardsByQuestion(a, b) {
+    const text = (card) => String(card.question === null || card.question === undefined ? '' : card.question).trim();
+    return text(a).localeCompare(text(b), undefined, { numeric: true, sensitivity: 'base' });
+  }
+
+  // A guess for any card of the quiz is accepted with the quiz's play id
+  // and an empty loadId (verified 2026-10-04). The play id ends in spaces,
+  // so it must be encoded, not trimmed.
+  function buildPunishRequest(playId, card) {
+    return {
+      url: '/api/game/' + encodeURIComponent(playId) + '/question/' + encodeURIComponent(card.id) + '/guess',
+      init: {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({ guess: card.answer === null || card.answer === undefined ? '' : String(card.answer), loadId: '', rating: 1 }),
+      },
+    };
+  }
+
+  // Whether the quiz is in the user's anki deck (GET /api/quiz/anki); null
+  // when the list is unusable. Only cards of a quiz in the deck have anki
+  // state to punish.
+  function isQuizInDeck(list, quizId) {
+    if (!Array.isArray(list)) return null;
+    return list.some((q) => q && q.id === quizId && !q.deletedAt);
+  }
+
+  // A card's punish state: undefined (never), 'pending', 'done' or
+  // { error }. Only the first and the last may send (again).
+  function shouldSendPunish(state) {
+    return state !== 'pending' && state !== 'done';
+  }
+
+  // Same-origin JSON request to the site's API; resolves with `message`.
+  // The browser sends the session cookies like for the site's own calls.
+  function fetchApiMessage(url, init) {
+    return fetch(url, Object.assign({ credentials: 'same-origin' }, init || {}))
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('HTTP ' + res.status))))
+      .then((data) => {
+        if (!data || data.error !== false || data.message === undefined) throw new Error('unexpected response');
+        return data.message;
+      });
+  }
+
+  const NO_PLAY_ERROR = "couldn't start a game for this quiz";
+
+  // The quiz's play id, from its anki queue (or the ?more card when nothing
+  // is due). Asked for once per page; a failure is retried on the next punish.
+  function getBrowsePlayId(state) {
+    if (!state.playIdPromise) {
+      const base = '/api/quiz/' + encodeURIComponent(state.quizId) + '/anki/question';
+      const firstPlay = (list) => (Array.isArray(list) && list[0] && typeof list[0].play === 'string' &&
+        list[0].play.trim() !== '' ? list[0].play : null);
+      state.playIdPromise = fetchApiMessage(base).then(firstPlay).catch(() => null)
+        .then((play) => play || fetchApiMessage(base + '?more').then(firstPlay).catch(() => null))
+        .then((play) => {
+          if (!play) {
+            state.playIdPromise = null;
+            throw new Error(NO_PLAY_ERROR);
+          }
+          return play;
+        });
+    }
+    return state.playIdPromise;
+  }
+
+  function punishBrowseCard(state, card) {
+    if (!shouldSendPunish(state.punished[card.id])) return;
+    state.punished[card.id] = 'pending';
+    renderBrowseList(state);
+    getBrowsePlayId(state)
+      .then((play) => {
+        const { url, init } = buildPunishRequest(play, card);
+        return fetchApiMessage(url, init).catch((e) => {
+          throw new Error('punishing failed (' + (e && e.message ? e.message : 'error') + ')');
+        });
+      })
+      .then(() => { state.punished[card.id] = 'done'; },
+        (e) => { state.punished[card.id] = { error: e && e.message ? e.message : NO_PLAY_ERROR }; })
+      .then(() => renderBrowseList(state));
+  }
+
+  const BROWSE_ROOT_CLASS = 'hq-browse';
+  let browseState = null; // the open browse page, see startBrowse()
+
+  function makeEl(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined) el.textContent = text;
+    return el;
+  }
+
+  function startBrowse(quizId) {
+    const root = makeEl('div', BROWSE_ROOT_CLASS);
+    const heading = makeEl('h1', 'hq-browse-title');
+    const links = makeEl('p', 'hq-browse-links');
+    const link = (text, href) => {
+      const a = makeEl('a', '', text);
+      a.href = href;
+      return a;
+    };
+    const quizPath = '/quiz/' + encodeURIComponent(quizId);
+    links.append(link('anki mode', quizPath + '?learn'), ' · ', link('normal', quizPath), ' · ', link('back to the list', '/learn'));
+    const explain = makeEl('p', 'hq-browse-explain',
+      'Forgot a card outside of your reviews - say an area code while playing GeoGuessr? Find it here and ' +
+      'press punish: the card is graded "again", exactly as if you had failed it in the anki mode. It comes back ' +
+      'in your next review (about 5 minutes from now) and its interval starts over. This can\'t be undone, ' +
+      'but the only effect is that you see the card sooner and more often until you know it again.');
+    const notInDeck = makeEl('p', 'hq-browse-explain');
+    notInDeck.append('This quiz isn\'t in your anki deck, so there is nothing to punish here. Add it to your ' +
+      'deck on the ', link('quiz page', quizPath), ' first.');
+    const status = makeEl('p', 'hq-browse-status');
+    const retry = makeEl('button', 'hq-browse-retry', 'retry');
+    retry.type = 'button';
+    const tools = makeEl('p', 'hq-browse-tools');
+    const search = makeEl('input', 'hq-browse-search');
+    search.type = 'search';
+    search.placeholder = 'search the questions';
+    const count = makeEl('span', 'hq-browse-count');
+    tools.append(search, ' ', count);
+    // One cell per card (question + punish), as many columns as fit.
+    const grid = makeEl('div', 'hq-browse-grid');
+    root.append(heading, links, explain, notInDeck, status, retry, tools, grid);
+
+    const state = {
+      quizId: quizId, root: root, heading: heading, explain: explain, notInDeck: notInDeck,
+      // true / false once the deck list is in; 'unknown' when it couldn't be
+      // loaded (buttons shown then); undefined while loading (buttons hidden).
+      inDeck: undefined,
+      status: status, retry: retry,
+      tools: tools, search: search, count: count, grid: grid,
+      title: quizId, cards: null, phase: 'loading', punished: {}, playIdPromise: null, focused: false,
+    };
+    search.addEventListener('input', () => renderBrowseList(state));
+    retry.addEventListener('click', () => loadBrowseCards(state));
+    browseState = state;
+    loadBrowseCards(state);
+    fetchApiMessage('/api/quiz/anki')
+      .then((list) => {
+        const inDeck = isQuizInDeck(list, quizId);
+        state.inDeck = inDeck === null ? 'unknown' : inDeck;
+      }, () => { state.inDeck = 'unknown'; })
+      .then(() => renderBrowse(state));
+    // The quiz's own details (any quiz, also one that was never played in
+    // anki mode - so not from the deck list).
+    fetchApiMessage('/api/quiz/' + encodeURIComponent(quizId))
+      .then((quiz) => {
+        if (quiz && typeof quiz.title === 'string' && quiz.title.trim() !== '') {
+          state.title = quiz.title;
+          renderBrowse(state);
+        }
+      })
+      .catch(() => { /* keep the id as the title */ });
+  }
+
+  function loadBrowseCards(state) {
+    state.phase = 'loading';
+    renderBrowse(state);
+    fetchApiMessage('/api/quiz/' + encodeURIComponent(state.quizId) + '/question')
+      .then((cards) => {
+        if (!Array.isArray(cards)) throw new Error('unexpected response');
+        state.cards = cards.filter((c) => c && typeof c.id === 'string').sort(compareCardsByQuestion);
+        state.phase = 'ready';
+      })
+      .catch(() => { state.phase = 'error'; })
+      .then(() => renderBrowse(state));
+  }
+
+  function renderBrowse(state) {
+    state.heading.textContent = 'Browse cards: ' + state.title;
+    state.explain.style.display = state.inDeck === false ? 'none' : '';
+    state.notInDeck.style.display = state.inDeck === false ? '' : 'none';
+    const statusText = state.phase === 'loading' ? 'Loading cards…'
+      : state.phase === 'error' ? "Couldn't load the cards for this quiz."
+        : state.cards.length === 0 ? 'This quiz has no cards.' : '';
+    state.status.textContent = statusText;
+    state.status.style.display = statusText ? '' : 'none';
+    state.retry.style.display = state.phase === 'error' ? '' : 'none';
+    const ready = state.phase === 'ready' && state.cards.length > 0;
+    state.tools.style.display = ready ? '' : 'none';
+    state.grid.style.display = ready ? '' : 'none';
+    if (ready) renderBrowseList(state);
+  }
+
+  function renderBrowseList(state) {
+    if (!state.cards) return;
+    const query = state.search.value;
+    const shown = state.cards.filter((card) => cardMatchesQuery(card, query));
+    state.count.textContent = query.trim()
+      ? shown.length + ' of ' + state.cards.length + ' cards'
+      : state.cards.length + ' cards';
+    const canPunish = state.inDeck === true || state.inDeck === 'unknown';
+    const cells = shown.map((card) => {
+      const cell = makeEl('div', 'hq-browse-card');
+      const questionCell = makeEl('div', 'hq-browse-question');
+      if (isImageQuestion(card)) {
+        const src = String(card.question).trim();
+        const open = makeEl('a');
+        open.href = src;
+        open.target = '_blank';
+        open.rel = 'noopener';
+        const img = makeEl('img', 'hq-browse-image');
+        img.src = src;
+        img.alt = '';
+        img.loading = 'lazy';
+        open.appendChild(img);
+        questionCell.appendChild(open);
+      } else {
+        questionCell.textContent = card.question === null || card.question === undefined ? '' : String(card.question);
+      }
+      cell.appendChild(questionCell);
+      if (!canPunish) return cell;
+      const action = makeEl('div', 'hq-browse-action');
+      const punish = state.punished[card.id];
+      const button = makeEl('button', 'hq-punish',
+        punish === 'pending' ? 'punishing…' : punish === 'done' ? 'punished ✓' : 'punish');
+      button.type = 'button';
+      button.disabled = !shouldSendPunish(punish);
+      button.addEventListener('click', () => punishBrowseCard(state, card));
+      action.appendChild(button);
+      if (punish && punish.error) action.appendChild(makeEl('span', 'hq-browse-error', ' ' + punish.error));
+      cell.appendChild(action);
+      return cell;
+    });
+    state.grid.replaceChildren(...cells);
+  }
+
+  // Called on every poll pass, on every page (not only anki pages): shows
+  // our page on /quiz/<id>/browse - in place of the site's 404 block, under
+  // its header - and puts it back if the site re-renders; tears it down
+  // anywhere else.
+  function ensureBrowsePage() {
+    const quizId = browseQuizIdFromPath(location.pathname);
+    if (!quizId) {
+      if (browseState) {
+        browseState.root.remove();
+        browseState = null;
+      }
+      document.documentElement.classList.remove(BROWSE_HTML_CLASS);
+      return;
+    }
+    document.documentElement.classList.add(BROWSE_HTML_CLASS);
+    if (!browseState || browseState.quizId !== quizId) {
+      if (browseState) browseState.root.remove();
+      startBrowse(quizId);
+    }
+    const state = browseState;
+    const notFound = document.querySelector('h1.next-error-h1');
+    const notFoundBlock = notFound && notFound.closest('main > div');
+    if (notFoundBlock && notFoundBlock.style.display !== 'none') notFoundBlock.style.display = 'none';
+    if (!state.root.isConnected) {
+      const main = document.querySelector('main') || document.body;
+      main.insertBefore(state.root, main.firstChild);
+      if (!state.focused) {
+        state.search.focus();
+        state.focused = true;
+      }
+    }
+    const title = 'Browse cards: ' + state.title;
+    if (document.title !== title) document.title = title;
+  }
+
+  const BROWSE_LINK_CLASS = 'hq-browse-link';
+
+  // The quiz id on a normal (non-anki) quiz page, /quiz/<id> without
+  // ?learn; null anywhere else (/quiz/new is the remix editor).
+  function normalQuizIdFromLocation(pathname, search) {
+    const m = /^\/quiz\/([^/]+)\/?$/.exec(String(pathname || ''));
+    if (!m || m[1] === 'new') return null;
+    if (new URLSearchParams(search || '').has('learn')) return null;
+    return decodeURIComponent(m[1]);
+  }
+
+  const ANKI_LINK_CLASS = 'hq-anki-link';
+
+  // The normal quiz page isn't an anki page, so the anki features (and with
+  // them ensureQuizLink) are off there; this one runs on every page and
+  // gives the title's action list the counterpart of the anki page's
+  // [normal quiz / browse cards / ...]:
+  // [anki mode / browse cards / remixes / new remix / ...]. On the anki page
+  // ensureQuizLink owns the browse link instead, and the anki link goes away
+  // (the title can survive in-app navigation between the two).
+  function ensureNormalQuizBrowseLink() {
+    const quizId = normalQuizIdFromLocation(location.pathname, location.search);
+    if (!quizId) {
+      document.querySelectorAll('a.' + ANKI_LINK_CLASS).forEach((el) => {
+        const sep = el.nextSibling;
+        if (sep && sep.nodeType === Node.TEXT_NODE && sep.textContent === ' / ') sep.remove();
+        el.remove();
+      });
+      return;
+    }
+    const actions = findTitleActionsEl();
+    if (!actions) return;
+    const quizPath = '/quiz/' + encodeURIComponent(quizId);
+    let link = actions.querySelector('a.' + BROWSE_LINK_CLASS);
+    if (!link) {
+      const first = actions.querySelector('a');
+      if (!first) return; // unexpected markup - leave the line alone
+      link = document.createElement('a');
+      link.className = BROWSE_LINK_CLASS;
+      link.textContent = 'browse cards';
+      actions.insertBefore(link, first);
+      actions.insertBefore(document.createTextNode(' / '), first);
+    }
+    if (link.getAttribute('href') !== quizPath + '/browse') link.setAttribute('href', quizPath + '/browse');
+    let anki = actions.querySelector('a.' + ANKI_LINK_CLASS);
+    if (!anki) {
+      anki = document.createElement('a');
+      anki.className = ANKI_LINK_CLASS;
+      anki.textContent = 'anki mode';
+      actions.insertBefore(anki, link);
+      actions.insertBefore(document.createTextNode(' / '), link);
+    }
+    if (anki.getAttribute('href') !== quizPath + '?learn') anki.setAttribute('href', quizPath + '?learn');
+  }
+
+  // "(play in: anki mode | normal)" -> "(play in: anki mode | normal | browse)"
+  function ensureBrowseListLinks() {
+    const table = findQuizListTable();
+    if (!table) return;
+    table.querySelectorAll('tbody tr').forEach((row) => {
+      const links = row.querySelector('[class*="quizLinks"]');
+      if (!links || links.querySelector('a.' + BROWSE_LINK_CLASS)) return;
+      const learn = row.querySelector('a[href*="?learn"]');
+      const m = learn && /^\/quiz\/([^/?#]+)/.exec(learn.getAttribute('href') || '');
+      if (!m) return;
+      const close = links.lastChild;
+      if (!close || close.nodeType !== Node.TEXT_NODE || !close.data.includes(')')) return; // unexpected markup
+      const link = document.createElement('a');
+      link.className = BROWSE_LINK_CLASS;
+      link.href = '/quiz/' + m[1] + '/browse';
+      link.textContent = 'browse';
+      links.insertBefore(document.createTextNode(' | '), close);
+      links.insertBefore(link, close);
+    });
+  }
+
   // ---------- Init ----------
 
   function init() {
@@ -3344,11 +3797,15 @@
       if (document.hidden) return;
       pollPass();
     }, 200);
+    ensureBrowsePage();
   }
 
   // One full maintenance pass. Runs every 200ms while the tab is visible,
   // and once immediately when the tab becomes visible again.
   function pollPass() {
+    // Not anki pages, so these have to run before the anki-page gate below.
+    ensureBrowsePage();
+    ensureNormalQuizBrowseLink();
     // Runtime page check: SPA navigation can move us to non-anki pages
     // where all features must stay off.
     setActive(isAnkiPage());
@@ -3356,6 +3813,7 @@
 
     invalidateNavScan();
     ensureListKbdHints();
+    ensureBrowseListLinks();
     ensureOpenDueButton();
     ensureUpdateNotice();
     ensureNavKbdHints();
