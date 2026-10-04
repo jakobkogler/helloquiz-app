@@ -4,6 +4,11 @@ All notable changes to the HelloQuiz Anki Turbo userscript, newest first.
 From 1.10.0 on, every version has its own section; older releases are
 grouped by minor version (each including its patch releases).
 
+## 1.12.0 — 2026-10-04
+
+- The cards-left box also shows how many other quizzes still have overdue
+  cards, e.g. *4 other overdue quizzes*.
+
 ## 1.11.0 — 2026-10-04
 
 - **Card browser** at `/quiz/<id>/browse`, linked from every `/learn` row

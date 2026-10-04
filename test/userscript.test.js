@@ -249,3 +249,24 @@ test('isQuizInDeck tells whether a quiz is in the anki deck list', () => {
   assert.equal(isQuizInDeck([], 'A'), false);
   assert.equal(isQuizInDeck(null, 'A'), null); // unknown
 });
+
+test('countOtherOverdueQuizzes counts overdue quizzes except the current one', () => {
+  const { countOtherOverdueQuizzes } = load('countOtherOverdueQuizzes');
+  const list = [
+    { id: 'A', overdueCount: 45 }, { id: 'B', overdueCount: 1 }, { id: 'C', overdueCount: 0 },
+    { id: 'D', overdueCount: 3 },
+  ];
+  assert.equal(countOtherOverdueQuizzes(list, 'A'), 2);
+  assert.equal(countOtherOverdueQuizzes(list, 'C'), 3);
+  assert.equal(countOtherOverdueQuizzes(list, null), 3);
+  assert.equal(countOtherOverdueQuizzes([], 'A'), 0);
+  assert.equal(countOtherOverdueQuizzes(null, 'A'), null);
+});
+
+test('otherOverdueQuizzesText words the second line of the cards-left box', () => {
+  const { otherOverdueQuizzesText } = load('otherOverdueQuizzesText');
+  assert.equal(otherOverdueQuizzesText(4), '4 other overdue quizzes');
+  assert.equal(otherOverdueQuizzesText(1), '1 other overdue quiz');
+  assert.equal(otherOverdueQuizzesText(0), 'no other overdue quizzes');
+  assert.equal(otherOverdueQuizzesText(null), '');
+});

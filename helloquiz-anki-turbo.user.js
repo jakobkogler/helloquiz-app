@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.11.0
+// @version      1.12.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -18,7 +18,7 @@
   const DEBUG = false;
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
-  const SCRIPT_VERSION = '1.11.0';
+  const SCRIPT_VERSION = '1.12.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
@@ -1470,6 +1470,7 @@
     cardsLeft = trackedCardsLeft(cardTracker, Date.now());
     logCardTracker('loaded ' + cards.length + ' card' + (cards.length === 1 ? '' : 's') +
       (quizId ? ' for quiz ' + quizId : ''));
+    if (showCardsLeft) refreshLiveQuizList();
   }
 
   function onCardAnswered(id, body) {
@@ -2858,6 +2859,32 @@
     return cardsLeft + (cardsLeft === 1 ? ' card left' : ' cards left');
   }
 
+  // The box's second line: how many OTHER quizzes still have overdue cards,
+  // from the latest /api/quiz/anki list (null while there is none).
+  function countOtherOverdueQuizzes(list, currentId) {
+    if (!Array.isArray(list)) return null;
+    return list.filter((q) => q && q.id !== currentId && Number(q.overdueCount) > 0).length;
+  }
+
+  function otherOverdueQuizzesText(count) {
+    if (count === null || count === undefined) return '';
+    if (count === 0) return 'no other overdue quizzes';
+    return count + (count === 1 ? ' other overdue quiz' : ' other overdue quizzes');
+  }
+
+  // The site doesn't fetch the quiz list on a quiz page, so ask for it on
+  // every batch of cards the quiz loads; the fetch hook (onAnkiQuizList)
+  // picks the response up into liveQuizList.
+  let quizListRefreshInFlight = false;
+
+  function refreshLiveQuizList() {
+    if (quizListRefreshInFlight) return;
+    quizListRefreshInFlight = true;
+    fetch('/api/quiz/anki', { credentials: 'same-origin' })
+      .catch(() => { /* keep the last list */ })
+      .then(() => { quizListRefreshInFlight = false; });
+  }
+
   // The site's popover is a wrapper right next to the tab strip whose class
   // ends in "Selected" (infoSelected / settingsSelected / closedSelected).
   // Matched by that readable ending, not the generated hash.
@@ -2877,13 +2904,14 @@
   // doesn't resize with the count - copied as inline styles so nothing
   // aimed at the site's classes affects ours.
   const CARDS_POPOVER_CSS = 'position: fixed; z-index: 3; right: 10px; ' +
-    'top: calc(var(--top-height) + 30px); display: block; width: 180px; ' +
+    'top: calc(var(--top-height) + 30px); display: block; width: 210px; ' +
     'max-width: min(50%, 500px); max-height: calc(100% - 150px); margin: 0; ' +
     'background: var(--bg); color: var(--text); ' +
     'border: 1px solid var(--hl); border-radius: 10px; ' +
     'font-family: Twemoji Country Flags, Inter, Inter Fallback; transition: all .2s ease-in-out;';
   const CARDS_POPOVER_TEXT_CSS = 'margin: 5px auto; max-width: 100%; text-align: center; ' +
     'white-space: wrap; text-overflow: clip; overflow: auto;';
+  const CARDS_POPOVER_QUIZZES_CSS = CARDS_POPOVER_TEXT_CSS + ' margin-top: -3px; font-size: 0.85em; opacity: 0.8;';
 
   function renderCardsPopover(tabs) {
     let popover = document.querySelector('.' + CARDS_POPOVER_CLASS);
@@ -2895,10 +2923,19 @@
       text.className = 'hq-cards-popover-text';
       text.setAttribute('style', CARDS_POPOVER_TEXT_CSS);
       popover.appendChild(text);
+      const quizzes = document.createElement('p');
+      quizzes.className = 'hq-cards-popover-quizzes';
+      quizzes.setAttribute('style', CARDS_POPOVER_QUIZZES_CSS);
+      popover.appendChild(quizzes);
       if (tabs.parentElement) tabs.parentElement.insertBefore(popover, tabs.nextSibling);
     }
     const text = popover.firstChild;
     if (text.textContent !== cardsLeftText()) text.textContent = cardsLeftText();
+    const quizzes = popover.lastChild;
+    const quizzesText = otherOverdueQuizzesText(countOtherOverdueQuizzes(liveQuizList, currentQuizId()));
+    if (quizzes.textContent !== quizzesText) quizzes.textContent = quizzesText;
+    const display = quizzesText ? '' : 'none';
+    if (quizzes.style.display !== display) quizzes.style.display = display;
   }
 
   function ensureCardsPopover() {
@@ -2951,7 +2988,8 @@
     'on city quizzes.';
 
   const CARDS_TIP = 'While the quiz info / settings popover is closed (the \u2716 tab), ' +
-    'shows how many cards are still coming in this quiz. Each answered card is ' +
+    'shows how many cards are still coming in this quiz, and how many other quizzes still ' +
+    'have overdue cards. Each answered card is ' +
     'counted again once the interval its grading button showed has passed (5 minutes ' +
     'for a wrong answer on the map). Starts fresh when you reopen the quiz.';
 

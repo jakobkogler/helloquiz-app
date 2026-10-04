@@ -20,7 +20,7 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 - **Update notice** — every 3 hours the script checks the published version on GitHub, and when a newer one is out, the `/learn` quiz list shows a banner with links to *update* (your userscript manager then offers the new version), the *changelog*, and *dismiss* (hides it until an even newer version). It never shows inside a quiz.
 - **Auto pause/resume** — the countdown pauses when you switch tabs or the window loses focus, and resumes where it left off when you come back.
 - **Next quiz in line** — the end-of-quiz screen gets a *next quiz* button (key <kbd>3</kbd>) that works through the anki quiz list in order: start with the second quiz, and it takes you to the third, fourth, … The site's own button, which always goes back to the most overdue quiz, stays as *most overdue quiz* (key <kbd>4</kbd>). The order is the list as it was on `/learn` (finished quizzes drop down the live list, so it isn't followed directly); quizzes without overdue cards by now are skipped, and once the end is reached it starts over from the current list.
-- **Cards left** — while the compact view's popover is closed (the ✖ tab, the default when a quiz opens), a small box shows how many cards are still coming in the quiz, e.g. `12 cards left`; opening ⓘ or ⚙ replaces it as usual. The count follows each card's next appearance: answering a card schedules it by the interval its grading button shows (e.g. *again (in 4 min)*, or 5 minutes for a wrong answer on the map), and it counts again once that time has come — whether it comes back in the same run or on *practice more*. The count is updated on every answer and every batch of cards the quiz loads, and starts fresh when you reopen the quiz. Can be turned off in the settings (*show cards left*).
+- **Cards left** — while the compact view's popover is closed (the ✖ tab, the default when a quiz opens), a small box shows how many cards are still coming in the quiz, e.g. `12 cards left`, and below it how many other quizzes still have overdue cards (`4 other overdue quizzes`); opening ⓘ or ⚙ replaces it as usual. The count follows each card's next appearance: answering a card schedules it by the interval its grading button shows (e.g. *again (in 4 min)*, or 5 minutes for a wrong answer on the map), and it counts again once that time has come — whether it comes back in the same run or on *practice more*. The count is updated on every answer and every batch of cards the quiz loads, and starts fresh when you reopen the quiz. Can be turned off in the settings (*show cards left*).
 - **Settings popover closes on re-click** — the compact view's icon strip (ⓘ / ✖ / ⚙) normally does nothing when you click the already-active ⓘ or ⚙ tab again; this makes that click close the popover too, the same as clicking ✖.
 
 ## Installation
@@ -45,7 +45,7 @@ Keyboard-shortcut badges and labels on the buttons, including the end-of-quiz *n
 
 ![Keyboard shortcut hints and the next quiz button on the end-of-quiz screen](screenshots/keyboard-shortcuts.png)
 
-The review pause after a wrong answer, so you can study the map you just missed — it works even on city quizzes — and the number of cards still left in the quiz:
+The review pause after a wrong answer, so you can study the map you just missed — it works even on city quizzes — and the cards still left in the quiz, with the number of other overdue quizzes:
 
 ![The review pause after a mistake and the cards-left box](screenshots/pause.png)
 
