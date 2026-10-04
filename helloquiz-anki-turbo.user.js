@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.13.0
+// @version      1.14.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -18,7 +18,7 @@
   const DEBUG = false;
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
-  const SCRIPT_VERSION = '1.13.0';
+  const SCRIPT_VERSION = '1.14.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
@@ -65,6 +65,7 @@
         seconds: TIMER_SECONDS,
         running: running,
         reviewPause: reviewPause,
+        finishTodaysCards: finishTodaysCards,
         perQuizSeconds: perQuizSeconds,
         autoGrade: autoGrade,
         autoGradeEasy: autoGradeEasy,
@@ -80,6 +81,9 @@
   // When true, pause after a wrong answer/timeout so you can study the map
   // before continuing. When false, jump straight to the next question.
   let reviewPause = typeof saved.reviewPause === 'boolean' ? saved.reviewPause : true;
+  // Click "practice more" by itself while the next card is due today. Off
+  // by default - an expert feature.
+  let finishTodaysCards = typeof saved.finishTodaysCards === 'boolean' ? saved.finishTodaysCards : false;
   // TIMER_SECONDS is the global default used everywhere. A quiz can override
   // just its own duration: perQuizSeconds maps a quiz title to its seconds.
   // Quizzes without an entry fall back to the global default.
@@ -137,6 +141,7 @@
     if (typeof data.seconds === 'number' && data.seconds > 0) TIMER_SECONDS = data.seconds;
     if (typeof data.running === 'boolean') running = data.running;
     if (typeof data.reviewPause === 'boolean') reviewPause = data.reviewPause;
+    if (typeof data.finishTodaysCards === 'boolean') finishTodaysCards = data.finishTodaysCards;
     if (data.perQuizSeconds && typeof data.perQuizSeconds === 'object') perQuizSeconds = data.perQuizSeconds;
     if (typeof data.autoGrade === 'boolean') autoGrade = data.autoGrade;
     if (typeof data.showCardsLeft === 'boolean') showCardsLeft = data.showCardsLeft;
@@ -455,6 +460,14 @@
   const BROWSE_HTML_CLASS = 'hq-browse-page'; // on <html> while the card browser is shown; declared before installHideStyle() runs
   const NAVSYM_CLASS = 'hq-timer-navsym'; // wraps the ▶/⇋/→ glyph so we can hide it via CSS
   const NAV_HIDE_CLASS = 'hq-nav-hide';   // hides end-of-quiz nav buttons during the pause
+  // Marks the end-of-quiz button row once its practice-more preview is in
+  // place; until then CSS keeps the row hidden from the first paint.
+  const PRACTICE_READY_CLASS = 'hq-practice-ready';
+  const PRACTICE_BUTTON_CLASS = 'hq-practice-button';
+  // On <html> from the moment "finish today's cards" clicks until the next
+  // cards are in: hides the button row outright, because while the site
+  // loads them it changes the buttons so the rule above may stop matching.
+  const FINISH_TODAY_CLICKED_CLASS = 'hq-finish-today-clicked';
   const TIMER_BAR_CLASS = 'hq-timer-bar'; // marks the injected timer bar (for the mutation filter)
   const HINT_DISPLAY_CLASS = 'hq-hint-display'; // our own "display" toggle in the hint line
   const HINT_HIDE_CLASS = 'hq-hint-hide';   // on <html> while no question is displayed (status message)
@@ -716,6 +729,29 @@
       html.${NAV_HIDE_CLASS} [class*="controlButtonsAnki"] {
         visibility: hidden !important;
       }
+      /* The end-of-quiz buttons (the row with the labelled nav buttons, not
+         the grading buttons) stay hidden until the practice-more preview is
+         in place - or for good when "finish today's cards" clicks it away -
+         so they never flash up without it. A pure-CSS safety net shows them
+         after 4 s regardless. */
+      [class*="controlButtonsAnki"]:has(span[class*="expanded"]):not(.${PRACTICE_READY_CLASS}) {
+        visibility: hidden;
+        animation: hq-practice-reveal 0s linear 4s forwards;
+      }
+      /* The site animates everything ("transition: all .2s"). On visibility
+         that keeps the buttons visible for the length of the transition when
+         they should hide, and fades them in when they show - so the
+         end-of-quiz row switches instantly instead, both ways. */
+      [class*="controlButtonsAnki"]:has(span[class*="expanded"]),
+      [class*="controlButtonsAnki"]:has(span[class*="expanded"]) * {
+        transition: none !important;
+      }
+      @keyframes hq-practice-reveal { to { visibility: visible; } }
+      html.${FINISH_TODAY_CLICKED_CLASS} [class*="controlButtonsAnki"] {
+        visibility: hidden !important;
+      }
+      /* "practice more · next in 3 days" on one line: the column grows. */
+      button.${PRACTICE_BUTTON_CLASS} { white-space: nowrap; }
       /* Our own hint "display" toggle; the site styles the hint line's
          spans via descendant selectors, so it mostly inherits that look. */
       span.${HINT_DISPLAY_CLASS} {
@@ -1471,6 +1507,9 @@
     logCardTracker('loaded ' + cards.length + ' card' + (cards.length === 1 ? '' : 's') +
       (quizId ? ' for quiz ' + quizId : ''));
     if (showCardsLeft) refreshLiveQuizList();
+    // Only a batch with cards counts: with nothing due the site first gets an
+    // empty list, and only then the ?more card (see endFinishTodayHide).
+    if (cards.length) finishTodayBatchLoaded = true;
   }
 
   function onCardAnswered(id, body) {
@@ -2827,6 +2866,23 @@
     return 'next in ' + formatDueTime(preview.dueMs, nowMs);
   }
 
+  // Finish today's cards: carry on while the next card is due today (local time)
+  // - due now, no due time, or later today; not once it falls on a later
+  // day, nor when there are no cards.
+  function shouldFinishToday(preview, nowMs) {
+    if (!preview || preview.kind === 'none') return false;
+    if (preview.kind === 'due') return true;
+    if (preview.dueMs === null || preview.dueMs <= nowMs) return true;
+    const due = new Date(preview.dueMs);
+    const now = new Date(nowMs);
+    return due.getFullYear() === now.getFullYear() && due.getMonth() === now.getMonth() &&
+      due.getDate() === now.getDate();
+  }
+
+  let practicePreviewFailed = false;
+  let practicePreviewRequestedAt = 0;
+  let finishTodayClickedAt = 0; // when "finish today's cards" clicked on the current end screen (0: not yet)
+
   function loadPracticePreview() {
     const quizId = currentQuizId();
     if (!quizId) return;
@@ -2849,39 +2905,105 @@
         });
       })
       .then((preview) => {
-        if (token === practicePreviewToken) practicePreview = preview;
-      }, () => { /* no preview - the button stays as the site made it */ });
+        if (token !== practicePreviewToken) return;
+        practicePreview = preview;
+        if (DEBUG) {
+          const now = Date.now();
+          const when = preview.kind === 'next'
+            ? (preview.dueMs === null ? 'no due time (due now)' : new Date(preview.dueMs).toLocaleString())
+            : preview.kind === 'due' ? preview.count + ' card(s) due now' : 'no cards left';
+          console.log('[helloquiz-timer] practice more preview: next card ' + when +
+            ' -> "' + practicePreviewText(preview, now) + '", finish today\'s cards would ' +
+            (shouldFinishToday(preview, now) ? 'continue' : 'stop'));
+        }
+      }, () => {
+        // no preview - the button stays as the site made it
+        if (token === practicePreviewToken) practicePreviewFailed = true;
+      });
+  }
+
+  // Whether the preview has an answer to show (or never will: failed, or
+  // taking longer than 4 s).
+  function practicePreviewSettled() {
+    return practicePreview !== null || practicePreviewFailed || Date.now() - practicePreviewRequestedAt > 4000;
+  }
+
+  // "Finish today's cards": once the preview is in, click "practice more"
+  // for you while the next card is due today. Returns true once it clicked
+  // (the row then stays hidden - see ensurePracticePreview). Never clicks
+  // during the review pause (the buttons are hidden then anyway and wait for
+  // your click); the poll doesn't run in a background tab either.
+  function finishTodayStep(button) {
+    if (!finishTodaysCards || finishTodayClickedAt || !practicePreviewSettled()) return false;
+    if (navPausePending || !shouldFinishToday(practicePreview, Date.now())) return false;
+    finishTodayClickedAt = Date.now();
+    finishTodayBatchLoaded = false;
+    document.documentElement.classList.add(FINISH_TODAY_CLICKED_CLASS);
+    if (DEBUG) console.log('[helloquiz-timer] finish today\'s cards: clicking practice more');
+    button.click();
+    return true;
+  }
+
+  // The click's own hiding ends once the next batch of cards has arrived and
+  // no end-of-quiz button (by its glyph, whatever the site did to its label)
+  // is left - or after 3 s, should the click have led nowhere.
+  let finishTodayBatchLoaded = false;
+
+  function endFinishTodayHide() {
+    const html = document.documentElement;
+    if (!html.classList.contains(FINISH_TODAY_CLICKED_CLASS)) return;
+    const endButtonsLeft = Array.from(document.querySelectorAll('[class*="controlButtonsAnki"] button'))
+      .some((b) => NAV_BUTTONS.some(({ symbol }) => b.textContent.includes(symbol)));
+    if ((finishTodayBatchLoaded && !endButtonsLeft) || Date.now() - finishTodayClickedAt > 3000) {
+      html.classList.remove(FINISH_TODAY_CLICKED_CLASS);
+    }
   }
 
   // Runs with the other end-screen upkeep; one lookup per appearance of the
   // buttons, the text re-derived every pass so "next in …" counts down.
   function ensurePracticePreview() {
+    endFinishTodayHide();
     const button = findNavButtonBySymbol(PRACTICE_MORE_SYMBOL);
     if (!button) {
       if (practicePreviewRequested) {
         practicePreviewRequested = false;
         practicePreview = null;
+        practicePreviewFailed = false;
         practicePreviewToken++;
       }
+      if (!document.documentElement.classList.contains(FINISH_TODAY_CLICKED_CLASS)) finishTodayClickedAt = 0;
+      document.querySelectorAll('.' + PRACTICE_READY_CLASS).forEach((el) => el.classList.remove(PRACTICE_READY_CLASS));
       return;
     }
     if (!practicePreviewRequested) {
       practicePreviewRequested = true;
+      practicePreviewRequestedAt = Date.now();
       loadPracticePreview();
     }
+    button.classList.add(PRACTICE_BUTTON_CLASS);
+    if (finishTodayStep(button)) return;
     const text = practicePreviewText(practicePreview, Date.now());
     let span = button.querySelector('span.' + PRACTICE_PREVIEW_CLASS);
     if (!text) {
       if (span) span.remove();
-      return;
+    } else {
+      if (!span) {
+        span = document.createElement('span');
+        span.className = PRACTICE_PREVIEW_CLASS;
+        (button.querySelector('[class*="expanded"]') || button).appendChild(span);
+      }
+      const full = ' \u00b7 ' + text;
+      if (span.textContent !== full) span.textContent = full;
     }
-    if (!span) {
-      span = document.createElement('span');
-      span.className = PRACTICE_PREVIEW_CLASS;
-      (button.querySelector('[class*="expanded"]') || button).appendChild(span);
+    // Reveal the row once the preview text is in place (same pass, so no
+    // frame shows the button without it) - unless "finish today's cards"
+    // just clicked it away: then only after 3 s, when evidently nothing
+    // happened.
+    const row = button.closest('[class*="controlButtonsAnki"]') || button.parentElement;
+    const justClicked = finishTodayClickedAt && Date.now() - finishTodayClickedAt <= 3000;
+    if (row && practicePreviewSettled() && !justClicked && !row.classList.contains(PRACTICE_READY_CLASS)) {
+      row.classList.add(PRACTICE_READY_CLASS);
     }
-    const full = ' \u00b7 ' + text;
-    if (span.textContent !== full) span.textContent = full;
   }
 
   // ---------- Nav-button keyboard shortcuts (end-of-quiz screen) ----------
@@ -3091,6 +3213,9 @@
       'counts as failed ("again"). Needs the countdown to be on.';
   }
 
+  const FINISH_TODAY_TIP = 'Normally a quiz ends once its overdue cards are done. With this on, ' +
+    'it carries straight on with every card that becomes due later today, so you finish the whole ' +
+    'day in one go instead of coming back for each card. It stops at the first card due tomorrow.';
   const PAUSE_TIP = 'After a wrong answer (or a timeout) the quiz stops on the question ' +
     'you just missed, so you can study the map before moving on. Click the map or ' +
     'press 1 to continue. Replaces the site\'s "force correct click", which is broken ' +
@@ -3396,6 +3521,21 @@
     pauseP.appendChild(pauseLabel);
     appendHelp(pauseP, PAUSE_TIP);
 
+    // Expert: click "practice more" by itself while cards are due today
+    const practiceP = document.createElement('p');
+    const practiceLabel = document.createElement('label');
+    const practiceCheckbox = document.createElement('input');
+    practiceCheckbox.type = 'checkbox';
+    practiceCheckbox.checked = finishTodaysCards;
+    practiceCheckbox.addEventListener('change', () => {
+      finishTodaysCards = practiceCheckbox.checked;
+      saveSettings();
+    });
+    practiceLabel.appendChild(practiceCheckbox);
+    practiceLabel.appendChild(document.createTextNode(' finish today\'s cards'));
+    practiceP.appendChild(practiceLabel);
+    appendHelp(practiceP, FINISH_TODAY_TIP);
+
     // Show the cards-left tab in the compact popover's strip
     const cardsP = document.createElement('p');
     const cardsLabel = document.createElement('label');
@@ -3424,6 +3564,7 @@
     if (currentQuizTitle) block.appendChild(quizP);
     block.appendChild(autoP);
     block.appendChild(pauseP);
+    block.appendChild(practiceP);
     block.appendChild(cardsP);
     block.appendChild(warning);
     container.appendChild(block);

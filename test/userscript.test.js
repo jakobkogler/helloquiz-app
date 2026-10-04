@@ -307,3 +307,16 @@ test('practicePreviewText words the preview on the practice more button', () => 
   assert.equal(practicePreviewText({ kind: 'none' }, now), 'no cards left');
   assert.equal(practicePreviewText(null, now), '');
 });
+
+test('shouldFinishToday continues while the next card is due today', () => {
+  const { shouldFinishToday } = load('shouldFinishToday');
+  const at = (d, h, m = 0) => new Date(2026, 9, d, h, m).getTime(); // local time
+  const now = at(4, 20); // 8 PM
+  assert.equal(shouldFinishToday({ kind: 'due', count: 3 }, now), true);
+  assert.equal(shouldFinishToday({ kind: 'next', dueMs: null }, now), true);
+  assert.equal(shouldFinishToday({ kind: 'next', dueMs: now - 1000 }, now), true);
+  assert.equal(shouldFinishToday({ kind: 'next', dueMs: at(4, 23) }, now), true);   // in 3 h, still today
+  assert.equal(shouldFinishToday({ kind: 'next', dueMs: at(5, 1) }, now), false);   // 1 AM tomorrow
+  assert.equal(shouldFinishToday({ kind: 'none' }, now), false);
+  assert.equal(shouldFinishToday(null, now), false);
+});

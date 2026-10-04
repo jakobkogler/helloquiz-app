@@ -4,6 +4,12 @@ All notable changes to the HelloQuiz Anki Turbo userscript, newest first.
 From 1.10.0 on, every version has its own section; older releases are
 grouped by minor version (each including its patch releases).
 
+## 1.14.0 — 2026-10-04
+
+- **Finish today's cards** (expert setting, off by default): a quiz
+  carries on with every card that becomes due later today, not just the
+  overdue ones, and stops at the first card due tomorrow.
+
 ## 1.13.0 — 2026-10-04
 
 - The end-of-quiz *practice more* button previews what it brings: *3 due
