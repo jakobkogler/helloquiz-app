@@ -9,6 +9,8 @@ grouped by minor version (each including its patch releases).
 - **Finish today's cards** (expert setting, off by default): a quiz
   carries on with every card that becomes due later today, not just the
   overdue ones, and stops at the first card due tomorrow.
+- *next quiz* goes back to the quiz list when no other quiz has overdue
+  cards, instead of just saying so.
 
 ## 1.13.0 — 2026-10-04
 

@@ -2775,7 +2775,7 @@
         saveNextQuizOrder(order);
         if (DEBUG) console.log('[helloquiz-timer] next quiz ->', id);
         if (!id) {
-          showToast('No other quiz has overdue cards right now.');
+          goToLearnList(); // nothing else is overdue: back to the quiz list
           return;
         }
         location.assign('/quiz/' + encodeURIComponent(id) + '?learn');
@@ -3040,8 +3040,12 @@
 
     e.preventDefault();
     if (DEBUG) console.log('[helloquiz-timer] Escape -> /learn');
-    // Prefer clicking an existing /learn link for a smooth SPA transition;
-    // fall back to a full navigation if none is on the page.
+    goToLearnList();
+  }
+
+  // Prefer clicking an existing /learn link for a smooth SPA transition;
+  // fall back to a full navigation if none is on the page.
+  function goToLearnList() {
     const learnLink = document.querySelector('a[href="/learn"]');
     if (learnLink) learnLink.click();
     else location.assign('https://helloquiz.app/learn');
