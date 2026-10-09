@@ -460,14 +460,11 @@
   const BROWSE_HTML_CLASS = 'hq-browse-page'; // on <html> while the card browser is shown; declared before installHideStyle() runs
   const NAVSYM_CLASS = 'hq-timer-navsym'; // wraps the ▶/⇋/→ glyph so we can hide it via CSS
   const NAV_HIDE_CLASS = 'hq-nav-hide';   // hides end-of-quiz nav buttons during the pause
-  // Marks the end-of-quiz button row once its practice-more preview is in
-  // place; until then CSS keeps the row hidden from the first paint.
-  const PRACTICE_READY_CLASS = 'hq-practice-ready';
+  // On <html> while the end-of-quiz buttons wait for the practice-more
+  // preview (or, after "finish today's cards" clicked, for the next cards):
+  // hides them outright, whatever the site renders meanwhile.
+  const END_WAIT_CLASS = 'hq-end-wait';
   const PRACTICE_BUTTON_CLASS = 'hq-practice-button';
-  // On <html> from the moment "finish today's cards" clicks until the next
-  // cards are in: hides the button row outright, because while the site
-  // loads them it changes the buttons so the rule above may stop matching.
-  const FINISH_TODAY_CLICKED_CLASS = 'hq-finish-today-clicked';
   const TIMER_BAR_CLASS = 'hq-timer-bar'; // marks the injected timer bar (for the mutation filter)
   const HINT_DISPLAY_CLASS = 'hq-hint-display'; // our own "display" toggle in the hint line
   const HINT_HIDE_CLASS = 'hq-hint-hide';   // on <html> while no question is displayed (status message)
@@ -729,26 +726,26 @@
       html.${NAV_HIDE_CLASS} [class*="controlButtonsAnki"] {
         visibility: hidden !important;
       }
-      /* The end-of-quiz buttons (the row with the labelled nav buttons, not
-         the grading buttons) stay hidden until the practice-more preview is
-         in place - or for good when "finish today's cards" clicks it away -
-         so they never flash up without it. A pure-CSS safety net shows them
-         after 4 s regardless. */
-      [class*="controlButtonsAnki"]:has(span[class*="expanded"]):not(.${PRACTICE_READY_CLASS}) {
+      /* The end-of-quiz buttons stay hidden until the practice-more preview
+         is in place - or, when "finish today's cards" clicks them away,
+         until the next cards are in. The class goes on <html> in the
+         observer pass that first sees the buttons (before they're ever
+         painted) and outlives the site re-rendering them. A pure-CSS
+         safety net shows them after 4 s regardless. */
+      html.${END_WAIT_CLASS} [class*="controlButtonsAnki"] {
         visibility: hidden;
         animation: hq-practice-reveal 0s linear 4s forwards;
       }
+      @keyframes hq-practice-reveal { to { visibility: visible; } }
       /* The site animates everything ("transition: all .2s"). On visibility
          that keeps the buttons visible for the length of the transition when
          they should hide, and fades them in when they show - so the
          end-of-quiz row switches instantly instead, both ways. */
+      html.${END_WAIT_CLASS} [class*="controlButtonsAnki"],
+      html.${END_WAIT_CLASS} [class*="controlButtonsAnki"] *,
       [class*="controlButtonsAnki"]:has(span[class*="expanded"]),
       [class*="controlButtonsAnki"]:has(span[class*="expanded"]) * {
         transition: none !important;
-      }
-      @keyframes hq-practice-reveal { to { visibility: visible; } }
-      html.${FINISH_TODAY_CLICKED_CLASS} [class*="controlButtonsAnki"] {
-        visibility: hidden !important;
       }
       /* "practice more · next in 3 days" on one line: the column grows. */
       button.${PRACTICE_BUTTON_CLASS} { white-space: nowrap; }
@@ -1032,6 +1029,9 @@
       // End-of-quiz pause: reveal the nav buttons. The last question is no
       // longer relevant on this screen, so stop mirroring it.
       endNavPause();
+      // "Finish today's cards" may have waited for this: click (or reveal)
+      // in the same pass, before the buttons are painted.
+      ensurePracticePreview();
       resetMirror('');
       return true;
     }
@@ -1508,7 +1508,7 @@
       (quizId ? ' for quiz ' + quizId : ''));
     if (showCardsLeft) refreshLiveQuizList();
     // Only a batch with cards counts: with nothing due the site first gets an
-    // empty list, and only then the ?more card (see endFinishTodayHide).
+    // empty list, and only then the ?more card (see finishTodayLoading).
     if (cards.length) finishTodayBatchLoaded = true;
   }
 
@@ -2221,7 +2221,8 @@
       siteCurrentQuestionId = null;
       hintRevealedFor = null;
       quizUsesHintToggle = false;
-      document.documentElement.classList.remove(HINT_HIDE_CLASS);
+      document.documentElement.classList.remove(HINT_HIDE_CLASS, END_WAIT_CLASS);
+      finishTodayClickedAt = 0;
       removeFallbackHintLine();
       removeQuizLink();
       showQuestion();
@@ -2916,10 +2917,20 @@
             ' -> "' + practicePreviewText(preview, now) + '", finish today\'s cards would ' +
             (shouldFinishToday(preview, now) ? 'continue' : 'stop'));
         }
+        applyPracticePreview();
       }, () => {
         // no preview - the button stays as the site made it
-        if (token === practicePreviewToken) practicePreviewFailed = true;
+        if (token !== practicePreviewToken) return;
+        practicePreviewFailed = true;
+        applyPracticePreview();
       });
+  }
+
+  // The answer is in: click or reveal right away, not on the next poll.
+  function applyPracticePreview() {
+    if (!scriptActive || document.hidden) return;
+    invalidateNavScan();
+    ensurePracticePreview();
   }
 
   // Whether the preview has an answer to show (or never will: failed, or
@@ -2928,41 +2939,36 @@
     return practicePreview !== null || practicePreviewFailed || Date.now() - practicePreviewRequestedAt > 4000;
   }
 
-  // "Finish today's cards": once the preview is in, click "practice more"
-  // for you while the next card is due today. Returns true once it clicked
-  // (the row then stays hidden - see ensurePracticePreview). Never clicks
-  // during the review pause (the buttons are hidden then anyway and wait for
-  // your click); the poll doesn't run in a background tab either.
-  function finishTodayStep(button) {
-    if (!finishTodaysCards || finishTodayClickedAt || !practicePreviewSettled()) return false;
-    if (navPausePending || !shouldFinishToday(practicePreview, Date.now())) return false;
-    finishTodayClickedAt = Date.now();
-    finishTodayBatchLoaded = false;
-    document.documentElement.classList.add(FINISH_TODAY_CLICKED_CLASS);
-    if (DEBUG) console.log('[helloquiz-timer] finish today\'s cards: clicking practice more');
-    button.click();
-    return true;
+  // "Finish today's cards" would click "practice more" for you: the next
+  // card is due today.
+  function finishTodayWanted() {
+    return finishTodaysCards && !finishTodayClickedAt && practicePreview !== null &&
+      shouldFinishToday(practicePreview, Date.now());
   }
 
-  // The click's own hiding ends once the next batch of cards has arrived and
-  // no end-of-quiz button (by its glyph, whatever the site did to its label)
-  // is left - or after 3 s, should the click have led nowhere.
+  // After that click, the buttons stay hidden while the site loads the next
+  // cards (it re-renders the end-of-quiz buttons meanwhile): until a
+  // non-empty batch has arrived and no end-of-quiz button (by its glyph,
+  // whatever the site did to its label) is left - or for 3 s, should the
+  // click have led nowhere.
   let finishTodayBatchLoaded = false;
 
-  function endFinishTodayHide() {
-    const html = document.documentElement;
-    if (!html.classList.contains(FINISH_TODAY_CLICKED_CLASS)) return;
-    const endButtonsLeft = Array.from(document.querySelectorAll('[class*="controlButtonsAnki"] button'))
+  function finishTodayLoading() {
+    if (!finishTodayClickedAt || Date.now() - finishTodayClickedAt > 3000) return false;
+    if (!finishTodayBatchLoaded) return true;
+    return Array.from(document.querySelectorAll('[class*="controlButtonsAnki"] button'))
       .some((b) => NAV_BUTTONS.some(({ symbol }) => b.textContent.includes(symbol)));
-    if ((finishTodayBatchLoaded && !endButtonsLeft) || Date.now() - finishTodayClickedAt > 3000) {
-      html.classList.remove(FINISH_TODAY_CLICKED_CLASS);
-    }
   }
 
-  // Runs with the other end-screen upkeep; one lookup per appearance of the
-  // buttons, the text re-derived every pass so "next in …" counts down.
+  // Runs in every observer pass (before the browser paints), every poll, and
+  // when the preview's answer arrives. The first pass that sees the buttons
+  // hides them and asks for the preview; the answer then either clicks
+  // "practice more" (finish today's cards) or puts the preview text on it
+  // and shows the buttons. The text is re-derived every pass so "next in …"
+  // counts down.
   function ensurePracticePreview() {
-    endFinishTodayHide();
+    const html = document.documentElement;
+    const loading = finishTodayLoading();
     const button = findNavButtonBySymbol(PRACTICE_MORE_SYMBOL);
     if (!button) {
       if (practicePreviewRequested) {
@@ -2971,8 +2977,13 @@
         practicePreviewFailed = false;
         practicePreviewToken++;
       }
-      if (!document.documentElement.classList.contains(FINISH_TODAY_CLICKED_CLASS)) finishTodayClickedAt = 0;
-      document.querySelectorAll('.' + PRACTICE_READY_CLASS).forEach((el) => el.classList.remove(PRACTICE_READY_CLASS));
+      if (!loading) finishTodayClickedAt = 0;
+      html.classList.toggle(END_WAIT_CLASS, loading);
+      return;
+    }
+    button.classList.add(PRACTICE_BUTTON_CLASS);
+    if (loading) {
+      html.classList.add(END_WAIT_CLASS);
       return;
     }
     if (!practicePreviewRequested) {
@@ -2980,8 +2991,21 @@
       practicePreviewRequestedAt = Date.now();
       loadPracticePreview();
     }
-    button.classList.add(PRACTICE_BUTTON_CLASS);
-    if (finishTodayStep(button)) return;
+    // Still waiting - or about to click, which waits for the end of the
+    // review pause (the buttons are hidden then anyway and wait for your
+    // click; endNavPause runs this again right away).
+    if (!practicePreviewSettled() || (finishTodayWanted() && navPausePending)) {
+      html.classList.add(END_WAIT_CLASS);
+      return;
+    }
+    if (finishTodayWanted()) {
+      finishTodayClickedAt = Date.now();
+      finishTodayBatchLoaded = false;
+      html.classList.add(END_WAIT_CLASS);
+      if (DEBUG) console.log('[helloquiz-timer] finish today\'s cards: clicking practice more');
+      button.click();
+      return;
+    }
     const text = practicePreviewText(practicePreview, Date.now());
     let span = button.querySelector('span.' + PRACTICE_PREVIEW_CLASS);
     if (!text) {
@@ -2995,15 +3019,9 @@
       const full = ' \u00b7 ' + text;
       if (span.textContent !== full) span.textContent = full;
     }
-    // Reveal the row once the preview text is in place (same pass, so no
-    // frame shows the button without it) - unless "finish today's cards"
-    // just clicked it away: then only after 3 s, when evidently nothing
-    // happened.
-    const row = button.closest('[class*="controlButtonsAnki"]') || button.parentElement;
-    const justClicked = finishTodayClickedAt && Date.now() - finishTodayClickedAt <= 3000;
-    if (row && practicePreviewSettled() && !justClicked && !row.classList.contains(PRACTICE_READY_CLASS)) {
-      row.classList.add(PRACTICE_READY_CLASS);
-    }
+    // Reveal the buttons with the preview text in place (same pass, so no
+    // frame shows the button without it).
+    html.classList.remove(END_WAIT_CLASS);
   }
 
   // ---------- Nav-button keyboard shortcuts (end-of-quiz screen) ----------
