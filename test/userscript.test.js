@@ -544,3 +544,13 @@ test('siteCountryOrder lists featured quizzes first, each group by title', () =>
   assert.deepEqual(siteCountryOrder(list).map((q) => q.id), ['p2', 'p1', 'pr', 'lo', 'pc', 'w', 'm', 'o', 'v']);
   assert.equal(list[0].id, 'p1'); // not in place
 });
+
+test('settingsPopoverOpenFrom reads the compact popover state', () => {
+  const { settingsPopoverOpenFrom } = load('settingsPopoverOpenFrom');
+  assert.equal(settingsPopoverOpenFrom('quiz-module__HPadfW__settingsSelected', false), true);
+  assert.equal(settingsPopoverOpenFrom('quiz-module__HPadfW__closedSelected', false), false);
+  assert.equal(settingsPopoverOpenFrom('quiz-module__HPadfW__infoSelected', false), false);
+  // no readable wrapper: the selected ⚙ tab decides
+  assert.equal(settingsPopoverOpenFrom(null, true), true);
+  assert.equal(settingsPopoverOpenFrom(null, false), false);
+});

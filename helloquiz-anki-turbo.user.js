@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.16.2
+// @version      1.16.3
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints. Also on the normal quiz pages, where answers can grade the quiz's anki cards.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -18,7 +18,7 @@
   const DEBUG = false;
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
-  const SCRIPT_VERSION = '1.16.2';
+  const SCRIPT_VERSION = '1.16.3';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
@@ -374,6 +374,15 @@
       timerBar = makeTimerBar(container);
     }
 
+    // Settings open: hold it, ready to run once they close.
+    if (settingsPaused) {
+      timerInterval = null;
+      timeoutHandle = null;
+      pausedRemaining = seconds;
+      setMirrorActive(false);
+      return;
+    }
+
     timerDeadline = Date.now() + seconds * 1000;
     setMirrorActive(true);
 
@@ -461,6 +470,9 @@
   }
 
   function resumeTimer() {
+    // The settings hold the countdown until they're closed, whatever else
+    // (a refocused tab, the question returning) would resume it.
+    if (settingsPaused) return;
     if (pausedRemaining === null || !running || overlayEl) return;
     const container = findMapContainer();
     if (container) {
@@ -505,6 +517,7 @@
   const MIRROR_CLASS = 'hq-timer-mirror';
   const KBD_CLASS = 'hq-timer-kbd'; // must be declared before installHideStyle() runs at document-start
   const BROWSE_HTML_CLASS = 'hq-browse-page'; // on <html> while the card browser is shown; declared before installHideStyle() runs
+  const SETTINGS_PAUSE_CLASS = 'hq-settings-pause'; // on <html> while the ⚙ popover is open: question hidden, countdown held
   const COUNTRY_FALLBACK_CLASS = 'hq-country-fallback'; // on our country list when it couldn't load: the site's table shows again
   const NAVSYM_CLASS = 'hq-timer-navsym'; // wraps the ▶/⇋/→ glyph so we can hide it via CSS
   const NAV_HIDE_CLASS = 'hq-nav-hide';   // hides end-of-quiz nav buttons during the pause
@@ -708,6 +721,7 @@
         watchForNavButtons();
         watchForNormalEnd();
         watchNormalSitePause();
+        watchSettingsPause();
         // After the watchers: the hint sync learns from / enforces against
         // the mirror, which the watchers above may just have updated.
         watchDisplayedQuestion();
@@ -944,6 +958,10 @@
         background: var(--bg, #f0f0ff) !important;
         color: var(--text, #222) !important;
       }
+      /* Settings open (⚙): the question box (question, hint, score) is
+         hidden - its space kept - while the countdown waits, so nothing
+         can be answered ahead of it. */
+      html.${SETTINGS_PAUSE_CLASS} ${QUIZ_CONTENT_SELECTOR} { visibility: hidden !important; }
       /* The country page (/country/<code>), recognized by the site's own
          "← other countries" line: its filter box, quiz table and pager are
          always hidden - our list replaces them - unless our list says it
@@ -2467,7 +2485,8 @@
       siteCurrentQuestionId = null;
       hintRevealedFor = null;
       quizUsesHintToggle = false;
-      document.documentElement.classList.remove(HINT_HIDE_CLASS, END_WAIT_CLASS, NORMAL_END_HIDE_CLASS, PROGRESS_BOXED_CLASS);
+      document.documentElement.classList.remove(HINT_HIDE_CLASS, END_WAIT_CLASS, NORMAL_END_HIDE_CLASS, PROGRESS_BOXED_CLASS, SETTINGS_PAUSE_CLASS);
+      settingsPaused = false;
       finishTodayClickedAt = 0;
       endNormalEndPause();
       removeFallbackHintLine();
@@ -2811,6 +2830,44 @@
   // countdown meanwhile, and pick it up where it was once the question is
   // back.
   let normalSitePaused = false;
+
+  // ---------- Pause while the settings are open ----------
+
+  // The compact popover's ⚙ tab is open: its wrapper's class ends in
+  // "settingsSelected" - or, should that ever change, the ⚙ tab is the
+  // selected one.
+  function settingsPopoverOpenFrom(wrapperClassName, gearSelected) {
+    if (typeof wrapperClassName === 'string' && wrapperClassName.trim()) {
+      return /settingsSelected$/.test(wrapperClassName.trim());
+    }
+    return !!gearSelected;
+  }
+
+  function settingsPopoverOpen() {
+    const tabs = document.querySelector(COMPACT_SETTINGS_TABS_SELECTOR);
+    if (!tabs) return false;
+    const wrapper = findSitePopover(tabs);
+    const gear = findTabByGlyph(tabs, '\u2699');
+    return settingsPopoverOpenFrom(wrapper ? wrapper.className : null, !!gear && gear.classList.contains('selected'));
+  }
+
+  let settingsPaused = false; // the open ⚙ popover holds the countdown
+
+  // Runs pre-paint (observer pass) and on the poll: while the settings are
+  // open the question is hidden and the countdown held (a change there,
+  // like switching the countdown on, mustn't start it under your nose);
+  // closing them shows the question and continues where it stopped.
+  function watchSettingsPause() {
+    const open = scriptActive && settingsPopoverOpen();
+    document.documentElement.classList.toggle(SETTINGS_PAUSE_CLASS, open);
+    if (open && !settingsPaused) {
+      pauseTimer();
+      settingsPaused = true;
+    } else if (!open && settingsPaused) {
+      settingsPaused = false;
+      if (!normalSitePaused && !document.hidden) resumeTimer();
+    }
+  }
 
   function watchNormalSitePause() {
     if (!inNormalMode()) return;
@@ -5146,6 +5203,7 @@
     watchForNavButtons();
     watchForNormalEnd();
     watchNormalSitePause();
+    watchSettingsPause();
     // After the watchers: the hint sync learns from / enforces against the
     // mirror, which the watchers above may just have updated.
     watchDisplayedQuestion();

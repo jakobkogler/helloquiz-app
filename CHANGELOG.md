@@ -4,6 +4,14 @@ All notable changes to the HelloQuiz Anki Turbo userscript, newest first.
 From 1.10.0 on, every version has its own section; older releases are
 grouped by minor version (each including its patch releases).
 
+## 1.16.3 — 2026-10-10
+
+- **Paused while the settings are open:** with the ⚙ popover open, the
+  question box (question, hint, score) is hidden and the countdown waits;
+  switching the countdown on there doesn't start it yet. Closing the
+  settings shows the question again and continues with the time that was
+  left (the full time, for a countdown started meanwhile).
+
 ## 1.16.2 — 2026-10-10
 
 - *Enable timer countdown* and *pause after mistakes* are set separately
