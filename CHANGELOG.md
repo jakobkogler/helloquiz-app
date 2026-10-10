@@ -4,6 +4,18 @@ All notable changes to the HelloQuiz Anki Turbo userscript, newest first.
 From 1.10.0 on, every version has its own section; older releases are
 grouped by minor version (each including its patch releases).
 
+## 1.15.0 — 2026-10-10
+
+- **Normal quiz pages** get the countdown (with the anki quiz's timer
+  override), the review pause after mistakes (or, with *always pause after
+  answer*, after every answer), and — with *show cards left*
+  on — the game's progress (*7 questions left*) in the top-right box.
+- **Grade anki from the normal quiz** (two settings there, off by default):
+  wrong answers (or too slow) grade the card *again* on the anki page,
+  correct ones by speed (with their own thresholds, set apart from the
+  anki page's auto-grade by speed), so playing the normal quiz also does your anki
+  reviews. Every answer counts, also the repeats of *recycle missed answers*.
+
 ## 1.14.0 — 2026-10-04
 
 - **Finish today's cards** (expert setting, off by default): a quiz

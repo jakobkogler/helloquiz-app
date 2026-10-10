@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.14.0
-// @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints.
+// @version      1.15.0
+// @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints. Also on the normal quiz pages, where answers can grade the quiz's anki cards.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=helloquiz.app
@@ -18,7 +18,7 @@
   const DEBUG = false;
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
-  const SCRIPT_VERSION = '1.14.0';
+  const SCRIPT_VERSION = '1.15.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
@@ -70,7 +70,12 @@
         autoGrade: autoGrade,
         autoGradeEasy: autoGradeEasy,
         autoGradeGood: autoGradeGood,
+        gradeAnkiEasy: gradeAnkiEasy,
+        gradeAnkiGood: gradeAnkiGood,
         showCardsLeft: showCardsLeft,
+        gradeAnkiWrong: gradeAnkiWrong,
+        gradeAnkiCorrect: gradeAnkiCorrect,
+        pauseAfterAnswer: pauseAfterAnswer,
       }));
     } catch (e) { /* storage unavailable - not critical */ }
   }
@@ -108,6 +113,22 @@
   // Show the "cards left" tab in the compact settings popover.
   let showCardsLeft = typeof saved.showCardsLeft === 'boolean' ? saved.showCardsLeft : true;
 
+  // Normal quiz pages: grade the quiz's anki cards from the answers given
+  // there (wrong / too slow -> again, correct -> by speed). Off by default.
+  let gradeAnkiWrong = typeof saved.gradeAnkiWrong === 'boolean' ? saved.gradeAnkiWrong : false;
+  let gradeAnkiCorrect = typeof saved.gradeAnkiCorrect === 'boolean' ? saved.gradeAnkiCorrect : false;
+  // Normal quiz pages: pause after every answer, not just after mistakes.
+  // Off by default.
+  let pauseAfterAnswer = typeof saved.pauseAfterAnswer === 'boolean' ? saved.pauseAfterAnswer : false;
+  // The speed thresholds for grading correct answers there - their own pair,
+  // separate from auto-grade by speed on the anki page.
+  let gradeAnkiEasy = percentOr(saved.gradeAnkiEasy, 66);
+  let gradeAnkiGood = percentOr(saved.gradeAnkiGood, 33);
+  if (gradeAnkiGood >= gradeAnkiEasy) {
+    gradeAnkiEasy = 66;
+    gradeAnkiGood = 33;
+  }
+
   // A stored percentage of the countdown, or the default when it's missing or
   // out of range.
   function percentOr(value, fallback) {
@@ -131,7 +152,7 @@
     }
 
     const prevRunning = running;
-    const prevReviewPause = reviewPause;
+    const prevPauseEnabled = pauseEnabled();
     const prevEffectiveSeconds = effectiveSeconds();
 
     // saveSettings() always writes the full object, so every field is
@@ -145,11 +166,20 @@
     if (data.perQuizSeconds && typeof data.perQuizSeconds === 'object') perQuizSeconds = data.perQuizSeconds;
     if (typeof data.autoGrade === 'boolean') autoGrade = data.autoGrade;
     if (typeof data.showCardsLeft === 'boolean') showCardsLeft = data.showCardsLeft;
+    if (typeof data.gradeAnkiWrong === 'boolean') gradeAnkiWrong = data.gradeAnkiWrong;
+    if (typeof data.gradeAnkiCorrect === 'boolean') gradeAnkiCorrect = data.gradeAnkiCorrect;
+    if (typeof data.pauseAfterAnswer === 'boolean') pauseAfterAnswer = data.pauseAfterAnswer;
     autoGradeEasy = percentOr(data.autoGradeEasy, autoGradeEasy);
     autoGradeGood = percentOr(data.autoGradeGood, autoGradeGood);
     if (autoGradeGood >= autoGradeEasy) {
       autoGradeEasy = 66;
       autoGradeGood = 33;
+    }
+    gradeAnkiEasy = percentOr(data.gradeAnkiEasy, gradeAnkiEasy);
+    gradeAnkiGood = percentOr(data.gradeAnkiGood, gradeAnkiGood);
+    if (gradeAnkiGood >= gradeAnkiEasy) {
+      gradeAnkiEasy = 66;
+      gradeAnkiGood = 33;
     }
 
     if (DEBUG) console.log('[helloquiz-timer] settings synced from another tab');
@@ -164,7 +194,7 @@
     // If the pause was switched off remotely while this tab is sitting on an
     // overlay, continue immediately instead of leaving it stuck - same as
     // flipping the checkbox locally.
-    if (!reviewPause && prevReviewPause && overlayEl && !proceedFromOverlay()) {
+    if (!pauseEnabled() && prevPauseEnabled && overlayEl && !proceedFromOverlay()) {
       hideReviewOverlay();
       pendingReview = false;
     }
@@ -312,9 +342,11 @@
   // zone, orange once only "good" is left, red once even that's gone.
   // Applies whether or not auto-grading is actually switched on - the zones
   // exist either way, this just makes them visible.
+  // On a normal page the zones are those of grading its correct answers.
   function timerBarColor(remainingPct) {
-    if (remainingPct >= autoGradeEasy) return '#2ecc40'; // easy
-    if (remainingPct >= autoGradeGood) return 'orange';  // good
+    const normal = inNormalMode();
+    if (remainingPct >= (normal ? gradeAnkiEasy : autoGradeEasy)) return '#2ecc40'; // easy
+    if (remainingPct >= (normal ? gradeAnkiGood : autoGradeGood)) return 'orange';  // good
     return 'crimson';                                    // hard
   }
 
@@ -464,6 +496,10 @@
   // preview (or, after "finish today's cards" clicked, for the next cards):
   // hides them outright, whatever the site renders meanwhile.
   const END_WAIT_CLASS = 'hq-end-wait';
+  // On <html> during the end-of-game pause of a normal game (start screen
+  // hidden), and while the progress box replaces the site's x/y line.
+  const NORMAL_END_HIDE_CLASS = 'hq-normal-end-hide';
+  const PROGRESS_BOXED_CLASS = 'hq-progress-boxed';
   const PRACTICE_BUTTON_CLASS = 'hq-practice-button';
   const TIMER_BAR_CLASS = 'hq-timer-bar'; // marks the injected timer bar (for the mutation filter)
   const HINT_DISPLAY_CLASS = 'hq-hint-display'; // our own "display" toggle in the hint line
@@ -571,6 +607,9 @@
       mirror.textContent = mirrorText;
     }
     mirror.classList.toggle(MIRROR_ACTIVE_CLASS, mirrorActive);
+    // A normal game's start screen has no question: no empty box either.
+    const empty = mirrorHTML === null && mirrorText === '' && pageMode() === 'normal';
+    if (mirror.hidden !== empty) mirror.hidden = empty;
   }
 
   function removeMirror() {
@@ -651,6 +690,8 @@
         watchForNewQuestion();
         watchForGradingButtons();
         watchForNavButtons();
+        watchForNormalEnd();
+        watchNormalSitePause();
         // After the watchers: the hint sync learns from / enforces against
         // the mirror, which the watchers above may just have updated.
         watchDisplayedQuestion();
@@ -746,6 +787,16 @@
       [class*="controlButtonsAnki"]:has(span[class*="expanded"]),
       [class*="controlButtonsAnki"]:has(span[class*="expanded"]) * {
         transition: none !important;
+      }
+      /* Normal game: the start screen waits behind the end-of-game pause. */
+      html.${NORMAL_END_HIDE_CLASS} [class*="controlButtonsMap"],
+      html.${NORMAL_END_HIDE_CLASS} [class*="controlButtonsMap"] * {
+        visibility: hidden !important;
+        transition: none !important;
+      }
+      /* Normal game: the progress box shows "N questions left" instead. */
+      html.${PROGRESS_BOXED_CLASS} [class*="scoreAndHint"] p[class*="progression"] {
+        display: none !important;
       }
       /* "practice more · next in 3 days" on one line: the column grows. */
       button.${PRACTICE_BUTTON_CLASS} { white-space: nowrap; }
@@ -966,13 +1017,46 @@
     return false;
   }
 
+  // Which of the script's two modes the page is in: 'anki' (the /learn list
+  // and quizzes in anki mode), 'normal' (a quiz's normal page, in the site's
+  // "normal" mode - not show answers / type answer / draw), or null. The
+  // site's mode radio decides; while it isn't rendered yet (document-start)
+  // the page counts as normal, the site's default.
+  function pageModeFor(pathname, search, normalModeChecked) {
+    if (pathname === '/learn') return 'anki';
+    if (/^\/quiz\//.test(pathname) && new URLSearchParams(search || '').has('learn')) return 'anki';
+    if (normalQuizIdFromLocation(pathname, search) && normalModeChecked !== false) return 'normal';
+    return null;
+  }
+
+  // The radio is only rendered while the settings popover is open, so the
+  // last state seen stands in for it otherwise (per page load).
+  let lastNormalModeChecked = null;
+
+  function pageMode() {
+    const radio = document.getElementById('opt-mode-Normal');
+    if (radio) lastNormalModeChecked = radio.checked;
+    return pageModeFor(location.pathname, location.search, lastNormalModeChecked);
+  }
+
+  // The normal quiz page, with the script active on it.
+  function inNormalMode() {
+    return scriptActive && pageMode() === 'normal';
+  }
+
   // Apply immediately at document-start, before first render
   installHideStyle();
-  if (isAnkiPage()) {
+  if (pageMode()) {
     hideQuestion();
   }
 
   // ---------- Review pause (after wrong answer) ----------
+
+  // Whether an answer that marked a review pauses the quiz: after mistakes,
+  // or on a normal page after every answer.
+  function pauseEnabled() {
+    return reviewPause || (pauseAfterAnswer && inNormalMode());
+  }
 
   function markPendingReview(reason) {
     pendingReview = true;
@@ -1016,6 +1100,15 @@
   // before the quiz has rendered its first question must not start a
   // countdown on a screen that still says "Click to start".
   function proceedFromOverlay() {
+    if (normalEndPausePending) {
+      // A normal game's end: reveal its start screen; the missed question
+      // is done with.
+      hideReviewOverlay();
+      pendingReview = false;
+      endNormalEndPause();
+      resetMirror('');
+      return true;
+    }
     const wasNavPause = navPausePending;
     // The end-of-quiz pause has no question by definition; it's the buttons
     // that are waiting to be revealed there.
@@ -1065,6 +1158,11 @@
   function scanNavButtons() {
     if (navScanCache && navScanCache.gen === navScanGen) return navScanCache.bySymbol;
     const bySymbol = {};
+    if (!isAnkiPage()) {
+      // A normal game's own buttons ("→ next", "▶ start") carry the same glyphs.
+      navScanCache = { gen: navScanGen, bySymbol };
+      return bySymbol;
+    }
     const spans = document.querySelectorAll('span[class*="generic-quiz-module"][class*="expanded"]');
     for (const span of spans) {
       const button = span.closest('button');
@@ -1216,7 +1314,7 @@
     const present = anyNavButtonPresent();
     if (present) {
       if (!navButtonsWerePresent) {
-        if (reviewPause && pendingReview) {
+        if (pauseEnabled() && pendingReview) {
           startNavPause();
         } else {
           // Buttons are visible straight away (no review pause needed,
@@ -1257,7 +1355,7 @@
   // and the button that opens it) shares that class prefix.
   function isSettingsTarget(target) {
     return !!(target && target.closest &&
-      target.closest('[class*="anki-settings"], .' + SETTINGS_BLOCK_CLASS));
+      target.closest('[class*="anki-settings"], [class*="map-quiz-settings"], .' + SETTINGS_BLOCK_CLASS));
   }
 
   function onReviewPointerDown(e) {
@@ -1325,19 +1423,30 @@
 
   function onAnswerDetected(args) {
     if (!scriptActive) return;
-    if (!isAnkiPage()) return;
     // The site logs: console.log(0, 'correct') or console.log(0, 'incorrect')
     // Only check string args — skip objects to avoid expensive serialization
     for (let i = 0; i < args.length; i++) {
       if (typeof args[i] !== 'string') continue;
       const s = args[i].toLowerCase();
       if (s === 'incorrect') {
+        if (inNormalMode()) onNormalAnswerOutcome(false, running && timedOut, remainingFraction());
         clearTimer();
         markPendingReview('incorrect answer');
         return;
       }
       if (s === 'correct') {
         if (DEBUG) console.debug('[helloquiz-timer] correct answer detected');
+        if (inNormalMode()) {
+          // No grading buttons in a normal game: a correct answer after the
+          // countdown ran out is the failure itself, with its pause.
+          const late = running && timedOut;
+          onNormalAnswerOutcome(true, late, remainingFraction());
+          clearTimer();
+          if (late) markPendingReview('timeout');
+          else if (pauseAfterAnswer) markPendingReview('correct answer');
+          else pendingReview = false;
+          return;
+        }
         // The clock has to be read here, before clearTimer() throws the
         // countdown away: this console message fires the instant the site
         // registers the answer, which is BEFORE it renders the grading
@@ -1706,9 +1815,17 @@
   // null to leave the request as is (also at quiz start, when no question
   // is displayed and displayedQuestionId can't resolve one).
   function hintEditTargetId(siteTargetId) {
-    if (!scriptActive || !isAnkiPage()) return null;
+    if (!scriptActive) return null;
     const id = displayedQuestionId();
     return (id && id !== siteTargetId) ? id : null;
+  }
+
+  // The site answered a card: in anki mode that feeds the cards-left
+  // tracker; in a normal game it names the card the coming outcome belongs to.
+  function onGuessRequest(id, body) {
+    lastAnsweredQuestionId = id;
+    if (inNormalMode()) normalAnsweredCardId = id;
+    else onCardAnswered(id, body);
   }
 
   function installFetchHook() {
@@ -1723,10 +1840,8 @@
 
         if (method === 'POST') {
           const m = url.match(GUESS_RE);
-          if (m) {
-            lastAnsweredQuestionId = decodeURIComponent(m[1]);
-            onCardAnswered(lastAnsweredQuestionId, init && init.body);
-          }
+          if (m) onGuessRequest(decodeURIComponent(m[1]), init && init.body);
+          else if (NEW_GAME_RE.test(url)) onNormalNewGame();
         } else if (method === 'PUT') {
           const m = url.match(HINT_RE);
           if (m) {
@@ -1752,6 +1867,14 @@
                 rememberQuestions(data.message);
                 onCardQueue(url, data.message);
               }
+            }).catch(() => {});
+          } catch (e) { /* response not clonable/JSON - ignore */ }
+        }, () => {});
+      } else if (method === 'GET' && NORMAL_QUESTIONS_RE.test(url)) {
+        resPromise.then((res) => {
+          try {
+            res.clone().json().then((data) => {
+              if (data && Array.isArray(data.message)) onNormalQuestionList(url, data.message);
             }).catch(() => {});
           } catch (e) { /* response not clonable/JSON - ignore */ }
         }, () => {});
@@ -1804,13 +1927,14 @@
         if (this._hqMethod === 'POST') {
           const m = (this._hqUrl || '').match(GUESS_RE);
           if (m) {
-            lastAnsweredQuestionId = decodeURIComponent(m[1]);
-            onCardAnswered(lastAnsweredQuestionId, body);
+            onGuessRequest(decodeURIComponent(m[1]), body);
             this.addEventListener('load', () => {
               try {
                 rememberNextQuestion(JSON.parse(this.responseText));
               } catch (e) { /* not JSON - ignore */ }
             });
+          } else if (NEW_GAME_RE.test(this._hqUrl || '')) {
+            onNormalNewGame();
           }
         } else if (this._hqHintTarget) {
           rememberHintFromBody(this._hqHintTarget, body);
@@ -1822,6 +1946,13 @@
                 rememberQuestions(data.message);
                 onCardQueue(this._hqUrl, data.message);
               }
+            } catch (e) { /* not JSON - ignore */ }
+          });
+        } else if (this._hqMethod === 'GET' && NORMAL_QUESTIONS_RE.test(this._hqUrl || '')) {
+          this.addEventListener('load', () => {
+            try {
+              const data = JSON.parse(this.responseText);
+              if (data && Array.isArray(data.message)) onNormalQuestionList(this._hqUrl, data.message);
             } catch (e) { /* not JSON - ignore */ }
           });
         } else if (this._hqMethod === 'GET' && ANKI_QUIZZES_RE.test(this._hqUrl || '')) {
@@ -1848,7 +1979,7 @@
     window.prompt = function (message, defaultValue) {
       try {
         if (typeof message === 'string' && message.toLowerCase().includes('hint') &&
-            scriptActive && isAnkiPage()) {
+            scriptActive) {
           const id = displayedQuestionId();
           if (id) defaultValue = questionInfoById[id].hint || '';
         }
@@ -1928,7 +2059,7 @@
     if (!scriptActive) return;
     // No question displayed ("Click to start"): the site's hint line would
     // belong to the still-hidden question - hide it wholesale via CSS.
-    document.documentElement.classList.toggle(HINT_HIDE_CLASS, mirrorIsStatus);
+    document.documentElement.classList.toggle(HINT_HIDE_CLASS, mirrorIsStatus && isAnkiPage());
     if (mirrorIsStatus) return;
     const p = findHintEl();
     if (!p) return;
@@ -2052,6 +2183,7 @@
   // Add one as the first entry of the site's own bracketed action list next
   // to the title: the current quiz URL without the ?learn flag.
   function ensureQuizLink() {
+    if (!isAnkiPage()) return; // the normal page has its own (ensureNormalQuizBrowseLink)
     if (!location.pathname.startsWith('/quiz/')) return; // no title actions on /learn
     const actions = findTitleActionsEl();
     if (!actions) return;
@@ -2164,10 +2296,13 @@
     pendingAutoGradeFraction = null; // belonged to the old quiz's last answer
     // Drop stale bar references so a fresh one gets created in the new DOM
     removeTimerBar();
-    resetMirror('Click to start'); // previous quiz's question is irrelevant now
-    // New quiz starts paused too: wait for a click before showing the
-    // question and starting the timer.
-    markPendingReview('quiz start');
+    // The previous quiz's question is irrelevant now; a new anki quiz starts
+    // paused too (wait for a click before showing the question and starting
+    // the timer).
+    enterStartState('quiz start');
+    endNormalEndPause();
+    resetNormalGame();
+    normalGameRunning = false;
     lastAnsweredQuestionId = null; // previous quiz's answer is irrelevant
     siteCurrentQuestionId = null;
     hintRevealedFor = null;
@@ -2196,7 +2331,20 @@
   // renders, so hooking it lets us hide/reset with zero visible flash.
 
   let lastUrl = location.href;
-  let scriptActive = isAnkiPage(); // may load on any page (SPA); start inactive off-anki
+  let scriptActive = !!pageMode(); // may load on any page (SPA); start inactive elsewhere
+
+  // How a run starts. In anki mode the first question waits behind "Click
+  // to start"; a normal game has the site's own start button for that, so
+  // its first question starts the countdown right away.
+  function enterStartState(reason) {
+    if (pageMode() === 'normal') {
+      resetMirror('');
+      pendingReview = false;
+    } else {
+      resetMirror('Click to start');
+      markPendingReview(reason);
+    }
+  }
 
   function setActive(active) {
     if (active === scriptActive) return;
@@ -2204,10 +2352,9 @@
     if (DEBUG) console.log('[helloquiz-timer] ' + (active ? 'activating' : 'deactivating') + ' on', location.pathname + location.search);
 
     if (active) {
-      // Returning to an anki page: start in the waiting state.
+      // Returning to an anki page (or a normal game): start in the waiting state.
       hideQuestion();
-      resetMirror('Click to start');
-      markPendingReview('entered anki page');
+      enterStartState('entered anki page');
       forceQuestionRedetect();
     } else {
       // Leaving anki mode: undo everything so normal pages are untouched.
@@ -2221,8 +2368,9 @@
       siteCurrentQuestionId = null;
       hintRevealedFor = null;
       quizUsesHintToggle = false;
-      document.documentElement.classList.remove(HINT_HIDE_CLASS, END_WAIT_CLASS);
+      document.documentElement.classList.remove(HINT_HIDE_CLASS, END_WAIT_CLASS, NORMAL_END_HIDE_CLASS, PROGRESS_BOXED_CLASS);
       finishTodayClickedAt = 0;
+      endNormalEndPause();
       removeFallbackHintLine();
       removeQuizLink();
       showQuestion();
@@ -2238,9 +2386,9 @@
   function onUrlChange() {
     if (location.href === lastUrl) return;
     lastUrl = location.href;
-    const anki = isAnkiPage();
-    setActive(anki);
-    if (anki) {
+    const active = !!pageMode();
+    setActive(active);
+    if (active) {
       fullReset('url changed to ' + location.pathname);
     }
   }
@@ -2270,12 +2418,13 @@
     const sig = questionSignature(qEl);
     if (sig !== currentQuestionSig) {
       currentQuestionSig = sig;
+      if (inNormalMode()) normalGameRunning = true;
       // Don't assume no buttons are present - the previous question's
       // grading buttons can still be mid-fade-out in the DOM right as the
       // next question renders.
       buttonsWerePresent = !!findAgainButton();
 
-      if (reviewPause && pendingReview) {
+      if (pauseEnabled() && pendingReview) {
         // Review pending: show the continue button and do NOT update the
         // mirror - it keeps showing the previous (answered) question.
         // Independent of the timer: the pause works even with the timer off.
@@ -2331,9 +2480,15 @@
   // was left, the easier the card evidently was. "again" is never awarded here
   // - failing is what the timeout path is for.
   function autoGradeButtonTitle(fraction) {
-    if (fraction >= autoGradeEasy / 100) return '4'; // easy
-    if (fraction >= autoGradeGood / 100) return '3'; // good
-    return '2';                                      // hard
+    return String(speedRating(fraction, autoGradeEasy, autoGradeGood));
+  }
+
+  // 4 easy / 3 good / 2 hard, from the leftover fraction of the countdown and
+  // the two thresholds (percent).
+  function speedRating(fraction, easyPct, goodPct) {
+    if (fraction >= easyPct / 100) return 4;
+    if (fraction >= goodPct / 100) return 3;
+    return 2;
   }
 
   function autoGradeAnswer(fraction) {
@@ -2344,6 +2499,227 @@
     if (!button) return;
     if (DEBUG) console.log('[helloquiz-timer] auto-grading with button', title, 'at', Math.round(fraction * 100) + '% left');
     button.click();
+  }
+
+  // ---------- Normal quiz pages: the game and its anki grading ----------
+
+  // A normal game (POST /api/quiz/<id>/new) sends a guess per answer
+  // (POST /api/game/<game>/question/<card>/guess, no rating) and logs
+  // "correct" / "incorrect" like anki mode. The card ids are the anki
+  // cards' ids, so with "grade anki" on, each answer can grade its card on
+  // the anki side - through the same request the card browser's punish
+  // sends. Every answer counts, also a missed card's repeats ("recycle missed
+  // answers" brings missed cards back).
+  const NORMAL_QUESTIONS_RE = /\/api\/quiz\/([^/]+)\/question(?:\?|$)/;
+  const NEW_GAME_RE = /\/api\/quiz\/[^/]+\/new(?:\?|$)/;
+  let normalAnsweredCardId = null;    // the latest guess's card, until its outcome is logged
+  let normalCardAnswers = Object.create(null); // card id -> its answer (the guess value)
+  let normalCardAnswersQuiz = null;
+  let normalGameRunning = false;      // a question of the current game has been on screen
+  // Per quiz: whether it is in the anki deck (null: not known yet), and the
+  // anki play id the grading guesses go to.
+  const normalAnki = { quizId: null, inDeck: null, deckPromise: null, playIdPromise: null };
+
+  // The anki rating for an answer in a normal game, or null when the
+  // matching setting is off. Correct but after the countdown ran out counts
+  // as failed; without a countdown a correct answer is "good".
+  function normalAnkiRating(a) {
+    const failed = !a.correct || a.timedOut;
+    if (failed) return a.gradeWrong ? 1 : null;
+    if (!a.gradeCorrect) return null;
+    return a.fraction === null || a.fraction === undefined ? 3 : speedRating(a.fraction, a.easy, a.good);
+  }
+
+  function resetNormalGame() {
+    normalAnsweredCardId = null;
+  }
+
+  function normalAnkiFor(quizId) {
+    if (normalAnki.quizId !== quizId) {
+      normalAnki.quizId = quizId;
+      normalAnki.inDeck = null;
+      normalAnki.deckPromise = null;
+      normalAnki.playIdPromise = null;
+    }
+    return normalAnki;
+  }
+
+  // Whether the quiz is in the anki deck, asked once per quiz (and again
+  // after a failure). The settings panel greys the grading rows out if not.
+  function normalQuizInDeck(quizId) {
+    const state = normalAnkiFor(quizId);
+    if (!state.deckPromise) {
+      state.deckPromise = fetchApiMessage('/api/quiz/anki', null, rawFetch)
+        .then((list) => {
+          const inDeck = isQuizInDeck(list, quizId);
+          if (normalAnki.quizId === quizId) state.inDeck = inDeck;
+          return inDeck;
+        })
+        .catch(() => {
+          state.deckPromise = null;
+          return null;
+        });
+    }
+    return state.deckPromise;
+  }
+
+  // The quiz's anki play id, as for punish: from its anki queue, else the
+  // ?more card. Through rawFetch, so the anki-mode hooks don't take the
+  // queue for one of their own.
+  function normalPlayId(quizId) {
+    const state = normalAnkiFor(quizId);
+    if (!state.playIdPromise) {
+      const base = '/api/quiz/' + encodeURIComponent(quizId) + '/anki/question';
+      const firstPlay = (list) => (Array.isArray(list) && list[0] && typeof list[0].play === 'string' &&
+        list[0].play.trim() !== '' ? list[0].play : null);
+      state.playIdPromise = fetchApiMessage(base, null, rawFetch).then(firstPlay).catch(() => null)
+        .then((play) => play || fetchApiMessage(base + '?more', null, rawFetch).then(firstPlay).catch(() => null))
+        .then((play) => {
+          if (!play) {
+            state.playIdPromise = null;
+            throw new Error(NO_PLAY_ERROR);
+          }
+          return play;
+        });
+    }
+    return state.playIdPromise;
+  }
+
+  // The site's own question list (GET /api/quiz/<id>/question): the cards'
+  // answers for grading, and their hints for the hint line during a pause.
+  function onNormalQuestionList(url, list) {
+    const m = NORMAL_QUESTIONS_RE.exec(url || '');
+    if (!m || !Array.isArray(list)) return;
+    normalCardAnswersQuiz = decodeURIComponent(m[1]);
+    normalCardAnswers = Object.create(null);
+    for (const q of list) {
+      if (q && typeof q.id === 'string') normalCardAnswers[q.id] = q.answer;
+    }
+    if (inNormalMode()) rememberQuestions(list);
+  }
+
+  function normalCardAnswer(quizId, cardId) {
+    if (normalCardAnswersQuiz === quizId && cardId in normalCardAnswers) {
+      return Promise.resolve(normalCardAnswers[cardId]);
+    }
+    return fetchApiMessage('/api/quiz/' + encodeURIComponent(quizId) + '/question', null, rawFetch)
+      .then((list) => {
+        onNormalQuestionList('/api/quiz/' + encodeURIComponent(quizId) + '/question', list);
+        if (!(cardId in normalCardAnswers)) throw new Error('unknown card');
+        return normalCardAnswers[cardId];
+      });
+  }
+
+  function gradeNormalCard(quizId, cardId, rating) {
+    normalQuizInDeck(quizId).then((inDeck) => {
+      if (inDeck !== true) {
+        if (DEBUG) console.log('[helloquiz-timer] not grading ' + cardId + ': quiz not in the anki deck (' + inDeck + ')');
+        return null;
+      }
+      return Promise.all([normalPlayId(quizId), normalCardAnswer(quizId, cardId)])
+        .then(([play, answer]) => {
+          const { url, init } = buildPunishRequest(play, { id: cardId, answer: answer }, rating);
+          return fetchApiMessage(url, init, rawFetch);
+        })
+        .then(() => {
+          if (DEBUG) console.log('[helloquiz-timer] graded anki card ' + cardId + ' with rating ' + rating);
+        });
+    }).catch((e) => {
+      if (DEBUG) console.log('[helloquiz-timer] grading anki card ' + cardId + ' failed:', e && e.message);
+      showToast('couldn\'t grade the anki card');
+    });
+  }
+
+  // An answer's outcome is in (the console message): grade its card if the
+  // settings say so.
+  function onNormalAnswerOutcome(correct, timedOutNow, fraction) {
+    const cardId = normalAnsweredCardId;
+    normalAnsweredCardId = null;
+    if (!gradeAnkiWrong && !gradeAnkiCorrect) return;
+    const quizId = currentQuizId();
+    if (!quizId || !cardId) return;
+    const rating = normalAnkiRating({
+      correct: correct, timedOut: timedOutNow, fraction: fraction,
+      gradeWrong: gradeAnkiWrong, gradeCorrect: gradeAnkiCorrect, easy: gradeAnkiEasy, good: gradeAnkiGood,
+    });
+    if (rating === null) return;
+    gradeNormalCard(quizId, cardId, rating);
+  }
+
+  // A new game: nothing graded yet, and whatever pause the last one left
+  // behind is over.
+  function onNormalNewGame() {
+    resetNormalGame();
+    if (!inNormalMode()) return;
+    normalGameRunning = false;
+    if (normalEndPausePending) {
+      hideReviewOverlay();
+      endNormalEndPause();
+    }
+    pendingReview = false;
+    resetMirror('');
+    // Its first question can be the one the last game ended on.
+    forceQuestionRedetect();
+  }
+
+  // ---------- Normal quiz pages: end of a game ----------
+
+  // When a game ends (the site's start button is back), a wrong last answer
+  // gets its review pause like in anki mode: the missed question stays up
+  // and the start screen (score, start button) only shows after the
+  // continue click - which therefore can't start a new game by accident.
+  let normalEndPausePending = false;
+
+  function findNormalStartButton() {
+    return document.querySelector('[class*="controlButtonsMap"] button[class*="__start"]');
+  }
+
+  function startNormalEndPause() {
+    normalEndPausePending = true;
+    document.documentElement.classList.add(NORMAL_END_HIDE_CLASS);
+    overlayEl = document.createElement('span'); // the continue handlers' marker
+    showNavPauseMessage();
+    if (DEBUG) console.log('[helloquiz-timer] normal end pause: hiding the start screen until click');
+  }
+
+  function endNormalEndPause() {
+    normalEndPausePending = false;
+    document.documentElement.classList.remove(NORMAL_END_HIDE_CLASS);
+    removeNavPauseMessage();
+  }
+
+  // Runs pre-paint (observer pass) and on the poll.
+  function watchForNormalEnd() {
+    if (!inNormalMode()) return;
+    const ended = !!findNormalStartButton();
+    if (ended && normalGameRunning) {
+      normalGameRunning = false;
+      forceQuestionRedetect();
+      clearTimer();
+      if (pauseEnabled() && pendingReview) startNormalEndPause();
+      else resetMirror('');
+    }
+    if (normalEndPausePending) {
+      document.documentElement.classList.add(NORMAL_END_HIDE_CLASS);
+      showNavPauseMessage();
+    }
+  }
+
+  // The site's own pause (‖ / p) takes the question off screen: hold the
+  // countdown meanwhile, and pick it up where it was once the question is
+  // back.
+  let normalSitePaused = false;
+
+  function watchNormalSitePause() {
+    if (!inNormalMode()) return;
+    const onScreen = hasQuestionOnScreen();
+    if (!onScreen && !normalSitePaused && (timerInterval || timeoutHandle) && !timedOut) {
+      pauseTimer();
+      normalSitePaused = pausedRemaining !== null;
+    } else if (onScreen && normalSitePaused) {
+      normalSitePaused = false;
+      resumeTimer();
+    }
   }
 
   // ---------- Nav button detection (▶ ⇋ →) ----------
@@ -2452,6 +2828,7 @@
     // ⇋ select quiz, → next quiz), matching their 1/2/3 shortcuts.
     // When the buttons aren't on the page, this is a cheap no-op; their
     // badges disappear together with the buttons themselves.
+    if (!isAnkiPage()) return; // a normal game keeps the site's own keys
     ensureNextQuizButton();
     ensurePracticePreview();
     NAV_BUTTONS.forEach(({ key, symbol }) => {
@@ -3071,7 +3448,7 @@
   }
 
   function onEscapeKeydown(e) {
-    if (!scriptActive) return;
+    if (!scriptActive || !isAnkiPage()) return;
     if (e.key !== 'Escape') return;
     if (isTypingInField()) return;
     if (location.pathname === '/learn') return; // already there
@@ -3132,6 +3509,24 @@
     return cardsLeft + (cardsLeft === 1 ? ' card left' : ' cards left');
   }
 
+  // A normal game's progress, from the site's own "5/10" line: how many
+  // questions are done and how many there are (recycled questions are
+  // counted however the site counts them).
+  function parseProgression(text) {
+    const m = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(String(text || ''));
+    return m ? { done: Number(m[1]), total: Number(m[2]) } : null;
+  }
+
+  function questionsLeftText(progress) {
+    if (!progress) return '';
+    const left = Math.max(0, progress.total - progress.done);
+    return left + (left === 1 ? ' question left' : ' questions left');
+  }
+
+  function findProgressionEl() {
+    return document.querySelector('[class*="scoreAndHint"] p[class*="progression"]');
+  }
+
   // The box's second line: how many OTHER quizzes still have overdue cards,
   // from the latest /api/quiz/anki list (null while there is none).
   function countOtherOverdueQuizzes(list, currentId) {
@@ -3186,7 +3581,7 @@
     'white-space: wrap; text-overflow: clip; overflow: auto;';
   const CARDS_POPOVER_QUIZZES_CSS = CARDS_POPOVER_TEXT_CSS + ' margin-top: -3px; font-size: 0.85em; opacity: 0.8;';
 
-  function renderCardsPopover(tabs) {
+  function renderCardsPopover(tabs, mainText, quizzesText) {
     let popover = document.querySelector('.' + CARDS_POPOVER_CLASS);
     if (!popover) {
       popover = document.createElement('div');
@@ -3203,9 +3598,8 @@
       if (tabs.parentElement) tabs.parentElement.insertBefore(popover, tabs.nextSibling);
     }
     const text = popover.firstChild;
-    if (text.textContent !== cardsLeftText()) text.textContent = cardsLeftText();
+    if (text.textContent !== mainText) text.textContent = mainText;
     const quizzes = popover.lastChild;
-    const quizzesText = otherOverdueQuizzesText(countOtherOverdueQuizzes(liveQuizList, currentQuizId()));
     if (quizzes.textContent !== quizzesText) quizzes.textContent = quizzesText;
     const display = quizzesText ? '' : 'none';
     if (quizzes.style.display !== display) quizzes.style.display = display;
@@ -3215,6 +3609,7 @@
     const tabs = document.querySelector(COMPACT_SETTINGS_TABS_SELECTOR);
     if (!tabs) {
       removeCardsPopover();
+      document.documentElement.classList.remove(PROGRESS_BOXED_CLASS);
       return;
     }
     // Closed: the site's wrapper says so, or (should its class ever change)
@@ -3223,11 +3618,20 @@
     const close = findTabByGlyph(tabs, '✖');
     const closed = (!!wrapper && /closedSelected$/.test(wrapper.className.trim())) ||
       (!!close && close.classList.contains('selected'));
-    if (scriptActive && showCardsLeft && closed) {
-      renderCardsPopover(tabs);
+    const normal = inNormalMode();
+    // A normal game: the site's x/y as "N questions left" (and its own line
+    // hidden meanwhile); without a readable x/y there's nothing to show.
+    const normalText = normal ? questionsLeftText(parseProgression((findProgressionEl() || {}).textContent)) : '';
+    const show = scriptActive && showCardsLeft && closed && (!normal || !!normalText);
+    if (show && normal) {
+      renderCardsPopover(tabs, normalText, '');
+    } else if (show) {
+      renderCardsPopover(tabs, cardsLeftText(),
+        otherOverdueQuizzesText(countOtherOverdueQuizzes(liveQuizList, currentQuizId())));
     } else {
       removeCardsPopover();
     }
+    document.documentElement.classList.toggle(PROGRESS_BOXED_CLASS, show && normal);
   }
 
   // ---------- Config UI (injected into the site's settings panel) ----------
@@ -3245,13 +3649,16 @@
     'time. Untick it to go back to the default.';
   // The auto-grade row's explanation, in the seconds the current thresholds
   // actually work out to - percentages of a countdown are hard to picture.
-  function autoGradeTip() {
+  function speedSecondsText(easyPct, goodPct) {
     const seconds = effectiveSeconds();
     const at = (percent) => (seconds * percent / 100).toFixed(1).replace(/\.0$/, '') + 's';
+    return 'With the current ' + seconds + 's countdown that means easy up to ' + at(100 - easyPct) +
+      ', good up to ' + at(100 - goodPct) + ', hard after that.';
+  }
+  function autoGradeTip() {
     return 'Grades a correct answer for you, from how much of the countdown was left: ' +
       'easy from ' + autoGradeEasy + '% up, good from ' + autoGradeGood + '% up, hard below that. ' +
-      'With the current ' + seconds + 's countdown that means easy up to ' + at(100 - autoGradeEasy) +
-      ', good up to ' + at(100 - autoGradeGood) + ', hard after that. Answering too slowly still ' +
+      speedSecondsText(autoGradeEasy, autoGradeGood) + ' Answering too slowly still ' +
       'counts as failed ("again"). Needs the countdown to be on.';
   }
 
@@ -3264,13 +3671,39 @@
     'press 1 to continue. Replaces the site\'s "force correct click", which is broken ' +
     'on city quizzes.';
 
+  const ALWAYS_PAUSE_TIP = 'Stops on the question you just answered after every answer, ' +
+    'right ones too, instead of jumping straight to the next question - so you can look at the ' +
+    'map first. Click the map or press 1 to continue. Includes the pause after mistakes, even ' +
+    'with that one off.';
+
   const CARDS_TIP = 'While the quiz info / settings popover is closed (the \u2716 tab), ' +
     'shows how many cards are still coming in this quiz, and how many other quizzes still ' +
     'have overdue cards. Each answered card is ' +
     'counted again once the interval its grading button showed has passed (5 minutes ' +
     'for a wrong answer on the map). Starts fresh when you reopen the quiz.';
 
+  // A normal game's progress box (the site's x/y), see ensureCardsPopover.
+  const PROGRESS_TIP = 'While the quiz info / settings popover is closed (the \u2716 tab), ' +
+    'shows how many questions of this game are left, in place of the site\'s own x/y line.';
+
+  const GRADE_WRONG_TIP = 'Grades the card on the anki page as failed ("again") when you answer it ' +
+    'wrong here - or too slowly, once the countdown has run out. So playing the normal quiz also does ' +
+    'your anki reviews. Every answer counts: a missed card that "recycle missed answers" brings back ' +
+    'is graded again each time. Only for quizzes in your anki deck.';
+
+  function gradeCorrectTip() {
+    return 'Grades the card on the anki page when you answer it right here, from how much of the ' +
+      'countdown was left: easy from ' + gradeAnkiEasy + '% up, good from ' + gradeAnkiGood + '% up, hard ' +
+      'below that (separate from auto-grade by speed on the anki page). ' +
+      (running ? speedSecondsText(gradeAnkiEasy, gradeAnkiGood) : 'With the countdown off it\'s always good.') + ' So playing the normal quiz also does your anki reviews. ' +
+      'Every answer counts, also a recycled card\'s. Only for quizzes in your anki deck. ' +
+      '⚠️ Careful: every game grades the cards again, even ones that aren\'t due yet. ' +
+      'Playing the quiz several times in a row pushes the cards you know further out each time, ' +
+      'soon months into the future.';
+  }
+
   function findSiteSettingsContainer() {
+    if (pageMode() === 'normal') return document.querySelector('[class*="map-quiz-settings-module"]');
     return document.querySelector('[class*="anki-settings-module"]');
   }
 
@@ -3281,7 +3714,7 @@
     if (!warning) return;
     const forceCb = document.getElementById('forceClick');
     const forceOn = !!(forceCb && forceCb.checked);
-    warning.style.display = (forceOn && reviewPause) ? 'block' : 'none';
+    warning.style.display = (forceOn && pauseEnabled()) ? 'block' : 'none';
   }
 
   function removeSettingsPanel() {
@@ -3295,18 +3728,24 @@
   function ensureSettingsPanel() {
     const container = findSiteSettingsContainer();
     if (!container) return;
+    const normal = pageMode() === 'normal';
+    // On the normal page the grading rows depend on whether the quiz is in
+    // the anki deck - ask (once), and rebuild when the answer comes in.
+    const quizId = currentQuizId();
+    const inDeck = normal && quizId ? (normalQuizInDeck(quizId), normalAnkiFor(quizId).inDeck) : null;
+    const key = (normal ? 'normal|' + inDeck + '|' : 'anki|') + currentQuizTitle;
     const existing = container.querySelector('.' + SETTINGS_BLOCK_CLASS);
     if (existing) {
       // Rebuild if the quiz changed since we built the panel, so the per-quiz
       // override row tracks the current quiz (and appears once its title is
       // known - the panel can be built a tick before the title is detected).
-      if (existing.dataset.hqQuiz === currentQuizTitle) return;
+      if (existing.dataset.hqQuiz === key) return;
       existing.remove();
     }
 
     const block = document.createElement('div');
     block.className = SETTINGS_BLOCK_CLASS;
-    block.dataset.hqQuiz = currentQuizTitle;
+    block.dataset.hqQuiz = key;
 
     // Separator from the site's own settings above. Inline styles because
     // the site's CSS resets <hr> to no border (renders as an invisible
@@ -3364,6 +3803,7 @@
         saveSettings();
         // The auto-grade explanation quotes the duration in seconds.
         if (refreshAutoGradeRow) refreshAutoGradeRow();
+        refreshGradeCorrectRow();
         // Only restart when this default is what the current quiz actually
         // uses; a quiz with its own override is unaffected by the default.
         if (!hasQuizOverride(currentQuizTitle)) restartTimer();
@@ -3380,6 +3820,7 @@
       // the countdown is off.
       if (refreshQuizRow) refreshQuizRow();
       if (refreshAutoGradeRow) refreshAutoGradeRow();
+      refreshGradeCorrectRow();
       const c = findMapContainer();
       if (running) {
         if (c) startTimer(c);
@@ -3441,6 +3882,7 @@
         saveSettings();
         refreshRow();
         if (refreshAutoGradeRow) refreshAutoGradeRow();
+        refreshGradeCorrectRow();
         restartTimer();
       });
 
@@ -3450,6 +3892,7 @@
           perQuizSeconds[quizTitle] = val;
           saveSettings();
           if (refreshAutoGradeRow) refreshAutoGradeRow();
+          refreshGradeCorrectRow();
           restartTimer();
         } else {
           quizSecInput.value = String(hasQuizOverride(quizTitle) ? perQuizSeconds[quizTitle] : TIMER_SECONDS);
@@ -3550,7 +3993,7 @@
       saveSettings();
       // If the pause is switched off while a review overlay is up, continue
       // immediately instead of leaving the user stuck on it.
-      if (!reviewPause && overlayEl && !proceedFromOverlay()) {
+      if (!pauseEnabled() && overlayEl && !proceedFromOverlay()) {
         // No question to continue to yet: drop the overlay anyway, or it would
         // keep swallowing map clicks. The question starts on its own once the
         // quiz renders it, since the pause is off now.
@@ -3563,6 +4006,28 @@
     pauseLabel.appendChild(document.createTextNode(' pause after mistakes'));
     pauseP.appendChild(pauseLabel);
     appendHelp(pauseP, PAUSE_TIP);
+
+    // Normal page: pause after correct answers too
+    const alwaysPauseP = document.createElement('p');
+    const alwaysPauseLabel = document.createElement('label');
+    const alwaysPauseCheckbox = document.createElement('input');
+    alwaysPauseCheckbox.type = 'checkbox';
+    alwaysPauseCheckbox.checked = pauseAfterAnswer;
+    alwaysPauseCheckbox.addEventListener('change', () => {
+      pauseAfterAnswer = alwaysPauseCheckbox.checked;
+      saveSettings();
+      // Same as switching the mistakes pause off: don't leave a pause up
+      // that no setting asks for any more.
+      if (!pauseEnabled() && overlayEl && !proceedFromOverlay()) {
+        hideReviewOverlay();
+        pendingReview = false;
+      }
+      updateForceClickWarning();
+    });
+    alwaysPauseLabel.appendChild(alwaysPauseCheckbox);
+    alwaysPauseLabel.appendChild(document.createTextNode(' always pause after answer'));
+    alwaysPauseP.appendChild(alwaysPauseLabel);
+    appendHelp(alwaysPauseP, ALWAYS_PAUSE_TIP);
 
     // Expert: click "practice more" by itself while cards are due today
     const practiceP = document.createElement('p');
@@ -3593,7 +4058,74 @@
     cardsLabel.appendChild(cardsCheckbox);
     cardsLabel.appendChild(document.createTextNode(' show cards left'));
     cardsP.appendChild(cardsLabel);
-    appendHelp(cardsP, CARDS_TIP);
+    appendHelp(cardsP, normal ? PROGRESS_TIP : CARDS_TIP);
+
+    // Normal page: grade the quiz's anki cards from the answers given here.
+    // Greyed out for a quiz that isn't in the anki deck.
+    const notInDeck = inDeck === false;
+    const makeGradeRow = (labelText, checked, onChange) => {
+      const row = document.createElement('p');
+      const label = document.createElement('label');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = checked;
+      checkbox.disabled = notInDeck;
+      checkbox.addEventListener('change', () => onChange(checkbox.checked));
+      label.appendChild(checkbox);
+      label.appendChild(document.createTextNode(' ' + labelText));
+      if (notInDeck) label.style.opacity = '0.5';
+      row.appendChild(label);
+      return { row, checkbox };
+    };
+    const gradeWrong = makeGradeRow('grade anki: wrong answers', gradeAnkiWrong, (on) => {
+      gradeAnkiWrong = on;
+      saveSettings();
+    });
+    appendHelp(gradeWrong.row, GRADE_WRONG_TIP);
+
+    // The correct-answer row carries the speed thresholds it grades by -
+    // its own pair, not the anki page's auto-grade by speed.
+    const gradeEasyInput = makePercentInput(gradeAnkiEasy);
+    const gradeGoodInput = makePercentInput(gradeAnkiGood);
+    const gradeCorrectHelp = makeHelp(gradeCorrectTip());
+    const refreshGradeCorrectRow = () => {
+      gradeEasyInput.disabled = notInDeck || !gradeAnkiCorrect || !running;
+      gradeGoodInput.disabled = gradeEasyInput.disabled;
+      gradeEasyInput.value = String(gradeAnkiEasy);
+      gradeGoodInput.value = String(gradeAnkiGood);
+      gradeCorrectHelp.body.textContent = gradeCorrectTip();
+    };
+    const gradeCorrect = makeGradeRow('grade anki: correct answers by speed: easy ', gradeAnkiCorrect, (on) => {
+      gradeAnkiCorrect = on;
+      saveSettings();
+      refreshGradeCorrectRow();
+    });
+    gradeEasyInput.addEventListener('change', () => {
+      const val = parseFloat(gradeEasyInput.value);
+      if (!isNaN(val) && val > gradeAnkiGood && val < 100) {
+        gradeAnkiEasy = val;
+        saveSettings();
+      }
+      refreshGradeCorrectRow();
+    });
+    gradeGoodInput.addEventListener('change', () => {
+      const val = parseFloat(gradeGoodInput.value);
+      if (!isNaN(val) && val > 0 && val < gradeAnkiEasy) {
+        gradeAnkiGood = val;
+        saveSettings();
+      }
+      refreshGradeCorrectRow();
+    });
+    gradeCorrect.row.appendChild(gradeEasyInput);
+    gradeCorrect.row.appendChild(document.createTextNode(' % / good '));
+    gradeCorrect.row.appendChild(gradeGoodInput);
+    gradeCorrect.row.appendChild(document.createTextNode(' %'));
+    gradeCorrect.row.appendChild(gradeCorrectHelp.badge);
+    gradeCorrect.row.appendChild(gradeCorrectHelp.body);
+    refreshGradeCorrectRow();
+    const deckNote = document.createElement('p');
+    deckNote.textContent = 'This quiz isn\'t in your anki deck, so there are no anki cards to grade.';
+    deckNote.style.cssText = 'margin-top: 0; font-size: 0.9em; opacity: 0.7;';
 
     // Warning shown only when "force correct click" and pause mode are both on.
     const warning = document.createElement('p');
@@ -3605,10 +4137,16 @@
     block.appendChild(heading);
     block.appendChild(timerP);
     if (currentQuizTitle) block.appendChild(quizP);
-    block.appendChild(autoP);
+    if (!normal) block.appendChild(autoP);
     block.appendChild(pauseP);
-    block.appendChild(practiceP);
+    if (normal) block.appendChild(alwaysPauseP);
+    if (!normal) block.appendChild(practiceP);
     block.appendChild(cardsP);
+    if (normal) {
+      block.appendChild(gradeWrong.row);
+      block.appendChild(gradeCorrect.row);
+      if (notInDeck) block.appendChild(deckNote);
+    }
     block.appendChild(warning);
     container.appendChild(block);
     updateForceClickWarning();
@@ -3768,14 +4306,15 @@
 
   // A guess for any card of the quiz is accepted with the quiz's play id
   // and an empty loadId (verified 2026-10-04). The play id ends in spaces,
-  // so it must be encoded, not trimmed.
-  function buildPunishRequest(playId, card) {
+  // so it must be encoded, not trimmed. Rated "again" unless `rating` says
+  // otherwise (the normal-page grading passes its own).
+  function buildPunishRequest(playId, card, rating) {
     return {
       url: '/api/game/' + encodeURIComponent(playId) + '/question/' + encodeURIComponent(card.id) + '/guess',
       init: {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-        body: JSON.stringify({ guess: card.answer === null || card.answer === undefined ? '' : String(card.answer), loadId: '', rating: 1 }),
+        body: JSON.stringify({ guess: card.answer === null || card.answer === undefined ? '' : String(card.answer), loadId: '', rating: rating || 1 }),
       },
     };
   }
@@ -3796,8 +4335,8 @@
 
   // Same-origin JSON request to the site's API; resolves with `message`.
   // The browser sends the session cookies like for the site's own calls.
-  function fetchApiMessage(url, init) {
-    return fetch(url, Object.assign({ credentials: 'same-origin' }, init || {}))
+  function fetchApiMessage(url, init, send) {
+    return (send || fetch)(url, Object.assign({ credentials: 'same-origin' }, init || {}))
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error('HTTP ' + res.status))))
       .then((data) => {
         if (!data || data.error !== false || data.message === undefined) throw new Error('unexpected response');
@@ -4102,6 +4641,9 @@
   // ---------- Init ----------
 
   function init() {
+    // A normal game starts at the site's start button, not behind "Click to
+    // start" (the anki default the state above is initialized with).
+    if (scriptActive) enterStartState('page load');
     installConsoleHook();
     installMirrorObserver();
     installHistoryHook();
@@ -4137,9 +4679,9 @@
     // Not anki pages, so these have to run before the anki-page gate below.
     ensureBrowsePage();
     ensureNormalQuizBrowseLink();
-    // Runtime page check: SPA navigation can move us to non-anki pages
-    // where all features must stay off.
-    setActive(isAnkiPage());
+    // Runtime page check: SPA navigation (or the site's mode radio) can move
+    // us to pages where all features must stay off.
+    setActive(!!pageMode());
     if (!scriptActive) return;
 
     invalidateNavScan();
@@ -4159,6 +4701,8 @@
     watchForNewQuestion();
     watchForGradingButtons();
     watchForNavButtons();
+    watchForNormalEnd();
+    watchNormalSitePause();
     // After the watchers: the hint sync learns from / enforces against the
     // mirror, which the watchers above may just have updated.
     watchDisplayedQuestion();

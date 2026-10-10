@@ -71,17 +71,18 @@ normal page as it does on anki pages.
 |---|---|---|
 | countdown on/off, seconds, *quiz timer override* (per quiz title — the normal and anki page of a quiz share it) | ✓ | ✓ |
 | pause after mistakes | ✓ | ✓ |
+| **always pause after answer** — new, stored `pauseAfterAnswer`, default off; pauses after right answers too (and after mistakes, even with that pause off) | — | ✓ |
 | show cards left | ✓ | ✓ (as progress) |
-| auto-grade by speed + thresholds | ✓ | ✓ (thresholds used by *grade anki: correct answers*) |
+| auto-grade by speed + thresholds | ✓ | — (the *grade anki: correct answers* row has its own two thresholds instead) |
 | finish today's cards | ✓ | — |
 | **grade anki: wrong answers** — new, stored `gradeAnkiWrong`, default off | — | ✓ |
-| **grade anki: correct answers** — new, stored `gradeAnkiCorrect`, default off | — | ✓ |
+| **grade anki: correct answers by speed: easy _ % / good _ %** — new, stored `gradeAnkiCorrect` (thresholds `gradeAnkiEasy` / `gradeAnkiGood`, default 66 / 33, separate from the anki page's), default off | — | ✓ |
 
 Help texts of the two new settings say: this grades the quiz's cards on
 the anki page, so playing the normal quiz also does your anki reviews; a
 wrong answer or a timeout grades *again*, a correct one is graded by speed
-with the auto-grade thresholds; only the first answer to each card in a
-game counts. For a quiz that isn't in the anki deck both are greyed out
+with its own thresholds; every answer counts, also the repeats of
+*recycle missed answers*. For a quiz that isn't in the anki deck both are greyed out
 with a short note ("not in your anki deck").
 
 Both sync across tabs like the other settings.
@@ -102,7 +103,8 @@ Both sync across tabs like the other settings.
   missed question, the site's next question stays hidden, map clicks are
   blocked and the countdown doesn't start. A map click/tap or key 1
   continues: the next question appears and its countdown starts. With the
-  pause off, it moves straight on.
+  pause off, it moves straight on. With *always pause after answer* on, a
+  correct answer pauses the same way.
 - **Timeout:** as in anki mode — the bar greys out, the question stays
   answerable, and whatever is answered then counts as failed (grade 1);
   the pause follows.
@@ -118,13 +120,12 @@ Both sync across tabs like the other settings.
 Only with a *grade anki* setting on, and only for a quiz in the anki deck
 (`GET /api/quiz/anki`, once per page).
 
-- **When:** right after the answer's console message — only the first
-  answer to that card in the current game (*recycle missed answers* brings
-  missed cards back; those later answers are not graded). Tracked as a set
-  of graded card ids, cleared by `POST /api/quiz/<id>/new`.
+- **When:** right after the answer's console message — every answer,
+  including the repeats of a missed card that *recycle missed answers*
+  brings back.
 - **Rating:**
   - wrong, or after a timeout: 1 (*grade anki: wrong answers*);
-  - correct: from the leftover countdown with the auto-grade thresholds —
+  - correct: from the leftover countdown with the row's own thresholds —
     4 easy, 3 good, 2 hard (*grade anki: correct answers*);
   - correct with the countdown off: 3 (good).
 - **Request:** the card browser's punish path —
@@ -158,12 +159,11 @@ Only with a *grade anki* setting on, and only for a quiz in the anki deck
 ## Testing
 
 - Unit tests for the pure pieces: the rating choice (wrong, timeout, by
-  speed, no countdown); first-answer-per-card-per-game (recycled card, new
-  game); parsing *x/y* into questions left; the page-mode decision (anki,
+  speed, no countdown); parsing *x/y* into questions left; the page-mode decision (anki,
   normal, other site mode, other pages).
 - Headless smoke test on a stub normal-quiz page (start, questions, guess
   requests, console messages): the pause holds the next question and the
-  countdown; the right grading requests go out, once per card even with
-  recycle; nothing is sent with the settings off or for a quiz not in the
+  countdown; the right grading requests go out, again for each recycled
+  answer; nothing is sent with the settings off or for a quiz not in the
   deck; anki pages behave as before.
 - Finally a check on the real site by the user.

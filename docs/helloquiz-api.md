@@ -72,7 +72,23 @@ Every card of the quiz (no scheduling state):
 }
 ```
 
-Used by the userscript's card browser.
+Used by the userscript's card browser. The normal quiz page fetches it as
+`/api/quiz/{quizId}/question?personalHints=true` (with the user's custom
+hints in `customHint`); the userscript takes the cards' answers and hints from
+that response for grading the anki cards from a normal game.
+
+## POST `/api/quiz/{quizId}/new`
+
+Starts a game on the normal quiz page, with body `{"mode":"Normal"}` (the
+site's mode setting). Its guesses then go to
+`POST /api/game/{gameId}/question/{questionId}/guess` (see below) with the
+body `{"guess": "356", "game": "<gameId>", "loadId": "vPRDN"}` — no `rating`,
+so a normal game doesn't touch the anki schedule by itself. The question ids
+are the same card ids as in anki mode, and the site logs `0 'correct'` /
+`0 'incorrect'` after each guess, as in anki mode.
+
+The userscript resets its per-game state on this request (which cards have
+been graded already).
 
 ## GET `/api/quiz/{quizId}/anki/question`
 
@@ -153,7 +169,9 @@ still displays the answered one. The userscript therefore remembers
 The server accepts a guess for **any** card of the quiz, not just the one
 currently loaded, with the quiz's play id (`play` from the anki question
 list) and an empty `loadId` (verified 2026-10-04). The card browser's
-*punish* sends `{"guess": <answer>, "loadId": "", "rating": 1}` this way.
+*punish* sends `{"guess": <answer>, "loadId": "", "rating": 1}` this way,
+and the normal page's *grade anki* settings the same with the rating of the
+answer (1 to 4), all through the browser's original `fetch`.
 
 ## PUT `/api/question/{questionId}/hint`
 

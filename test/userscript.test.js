@@ -368,3 +368,58 @@ test('shouldFinishToday continues while the next card is due today', () => {
   assert.equal(shouldFinishToday({ kind: 'none' }, now), false);
   assert.equal(shouldFinishToday(null, now), false);
 });
+
+test('pageModeFor tells anki, normal and other pages apart', () => {
+  const { pageModeFor } = load('pageModeFor', 'normalQuizIdFromLocation');
+  assert.equal(pageModeFor('/learn', '', null), 'anki');
+  assert.equal(pageModeFor('/quiz/Ao2Kdw8zHt81', '?learn', null), 'anki');
+  assert.equal(pageModeFor('/quiz/Ao2Kdw8zHt81', '', true), 'normal');
+  // the mode radio isn't rendered yet (document-start): normal is the default
+  assert.equal(pageModeFor('/quiz/Ao2Kdw8zHt81', '', null), 'normal');
+  // show answers / type answer / draw
+  assert.equal(pageModeFor('/quiz/Ao2Kdw8zHt81', '', false), null);
+  assert.equal(pageModeFor('/quiz/Ao2Kdw8zHt81/browse', '', null), null);
+  assert.equal(pageModeFor('/quiz/new', '?remix=Ao2Kdw8zHt81', null), null);
+  assert.equal(pageModeFor('/', '', null), null);
+});
+
+test('parseProgression reads the site\'s x/y progress', () => {
+  const { parseProgression, questionsLeftText } = load('parseProgression', 'questionsLeftText');
+  assert.deepEqual(parseProgression('5/10'), { done: 5, total: 10 });
+  assert.deepEqual(parseProgression(' 0 / 10 '), { done: 0, total: 10 });
+  assert.equal(parseProgression('3 pts'), null);
+  assert.equal(parseProgression(''), null);
+  assert.equal(questionsLeftText({ done: 5, total: 10 }), '5 questions left');
+  assert.equal(questionsLeftText({ done: 9, total: 10 }), '1 question left');
+  assert.equal(questionsLeftText({ done: 12, total: 10 }), '0 questions left');
+  assert.equal(questionsLeftText(null), '');
+});
+
+test('speedRating grades a correct answer by the leftover countdown', () => {
+  const { speedRating } = load('speedRating');
+  assert.equal(speedRating(0.9, 66, 33), 4);
+  assert.equal(speedRating(0.66, 66, 33), 4);
+  assert.equal(speedRating(0.5, 66, 33), 3);
+  assert.equal(speedRating(0.1, 66, 33), 2);
+  assert.equal(speedRating(0, 66, 33), 2);
+});
+
+test('normalAnkiRating picks the anki rating for an answer in a normal game', () => {
+  const { normalAnkiRating } = load('normalAnkiRating', 'speedRating');
+  const both = { gradeWrong: true, gradeCorrect: true, easy: 66, good: 33 };
+  assert.equal(normalAnkiRating(Object.assign({ correct: false, timedOut: false, fraction: 0.8 }, both)), 1);
+  // correct, but only after the countdown ran out: failed
+  assert.equal(normalAnkiRating(Object.assign({ correct: true, timedOut: true, fraction: 0 }, both)), 1);
+  assert.equal(normalAnkiRating(Object.assign({ correct: true, timedOut: false, fraction: 0.8 }, both)), 4);
+  assert.equal(normalAnkiRating(Object.assign({ correct: true, timedOut: false, fraction: 0.5 }, both)), 3);
+  assert.equal(normalAnkiRating(Object.assign({ correct: true, timedOut: false, fraction: 0.2 }, both)), 2);
+  // countdown off: no speed to go by
+  assert.equal(normalAnkiRating(Object.assign({ correct: true, timedOut: false, fraction: null }, both)), 3);
+  // each setting gates its own side
+  const wrongOnly = { gradeWrong: true, gradeCorrect: false, easy: 66, good: 33 };
+  assert.equal(normalAnkiRating(Object.assign({ correct: true, timedOut: false, fraction: 0.8 }, wrongOnly)), null);
+  assert.equal(normalAnkiRating(Object.assign({ correct: true, timedOut: true, fraction: 0 }, wrongOnly)), 1);
+  const correctOnly = { gradeWrong: false, gradeCorrect: true, easy: 66, good: 33 };
+  assert.equal(normalAnkiRating(Object.assign({ correct: false, timedOut: false, fraction: 0.8 }, correctOnly)), null);
+  assert.equal(normalAnkiRating(Object.assign({ correct: true, timedOut: true, fraction: 0 }, correctOnly)), null);
+});
