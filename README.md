@@ -43,9 +43,9 @@ A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violen
 
 The quiz's settings panel is extended, so that you can enable/disable and configure all of the features above ([screenshot](#countdown-and-settings)). Each setting has a **?** next to it that shows a short explanation of what it does. All settings are remembered across sessions and sync instantly to every other helloquiz.app tab open in the same browser, but are stored locally, so they are not synced across devices.
 
-### Smaller, more technical features
+### More features and bug fixes
 
-Opening all due quizzes in tabs, the update notice and a few other details: see [docs/details.md](docs/details.md).
+A few more features and fixes for bugs on the site — all quizzes of a country on one page (the site's search misses quizzes on other pages), opening all due quizzes in tabs, the update notice and more: see [docs/details.md](docs/details.md).
 
 ## Installation
 

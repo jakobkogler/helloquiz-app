@@ -4,6 +4,15 @@ All notable changes to the HelloQuiz Anki Turbo userscript, newest first.
 From 1.10.0 on, every version has its own section; older releases are
 grouped by minor version (each including its patch releases).
 
+## 1.16.0 — 2026-10-10
+
+- **Country pages** (`/country/<code>`) list all of the country's quizzes
+  on one page instead of 50 per page, with a search that works. This works
+  around a site bug: its filter only searches the table page you're on, so
+  it regularly misses quizzes on the other pages. Every word
+  has to appear in the title, author or description, case and accents
+  don't matter. Columns sort on a click; the default is the site's order.
+
 ## 1.15.1 — 2026-10-10
 
 - **Settings** are grouped under small headings — *timer*, *anki grading*,

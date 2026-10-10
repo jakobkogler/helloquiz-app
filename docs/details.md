@@ -1,7 +1,8 @@
-# More details
+# More features and bug fixes
 
-Smaller features of the HelloQuiz Anki Turbo userscript, beyond the ones in the [README](../README.md).
+Smaller features of the HelloQuiz Anki Turbo userscript, and fixes for bugs on the site, beyond the ones in the [README](../README.md).
 
 - **Open all due quizzes at once** — a button next to the *quizzes* heading on `/learn` opens every quiz that has overdue questions in its own tab, so a study session starts with exactly the quizzes that need work. This needs pop-ups to be allowed (see the note in the README's [Installation](../README.md#installation) section).
 - **Settings popover closes on re-click** — the compact view's icon strip (ⓘ / ✖ / ⚙) normally does nothing when you click the already-active ⓘ or ⚙ tab again; this makes that click close the popover too, the same as clicking ✖.
 - **Update notice** — every 3 hours the script checks the published version on GitHub, and when a newer one is out, the `/learn` quiz list shows a banner with links to *update* (your userscript manager then offers the new version), the *changelog*, and *dismiss* (hides it until an even newer version). It never shows inside a quiz.
+- **All quizzes of a country** — a country page (`/country/<code>`, e.g. [Austria](https://helloquiz.app/country/at)) shows every quiz of that country on one page instead of 50 at a time, with a search that actually finds them. This works around a bug on the site: its *filter rows…* box only searches the page of the table you are on, so a quiz on another page simply doesn't show up, even though it exists. Here the search covers all of the country's quizzes: every word you type has to appear in the title, author or description, and case and accents don't matter (`tirol municip` finds *Austria: Municipalities (Tirol)*). Click a column header to sort by it; the default is the site's own order, featured quizzes first.

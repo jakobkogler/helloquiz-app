@@ -188,3 +188,18 @@ question the user is actually looking at (by matching the displayed
 question text against the question list above) and rewrites `questionId`
 in this request — and the prefill of the site's hint prompt — to that
 question whenever they differ.
+
+## GET `/country/{code}` (page, not API)
+
+`GET /api/country/{code}` returns only the country's featured quizzes. The
+page `/country/{code}` (lower-case code) carries the whole list, though: its
+HTML embeds the React (RSC) payload in `self.__next_f.push([1, "..."])`
+scripts, and every quiz of the country is one object in there
+(`{"creator":{"displayName","handle","id"},"description","events":{"created","updated"},"id","title","country":[...],"highlighted","visible"}`,
+dates as `"$D<ISO date>"`). The table renders only the first 50 rows; its
+pages (`?quiz.page=1`, …) and its filter work in the browser on the same
+list, so the server sends the same HTML for every page number. Once the
+site's scripts run, the table sorts itself: featured quizzes first, each
+group by title (the server-rendered first page is in a different order).
+Authors show as their `displayName`, linking to `/account/<handle>`.
+Verified 2026-10-10 (Austria 26 quizzes, US 983).

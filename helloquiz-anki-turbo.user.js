@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.15.1
+// @version      1.16.0
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints. Also on the normal quiz pages, where answers can grade the quiz's anki cards.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -18,7 +18,7 @@
   const DEBUG = false;
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
-  const SCRIPT_VERSION = '1.15.1';
+  const SCRIPT_VERSION = '1.16.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
@@ -490,6 +490,7 @@
   const MIRROR_CLASS = 'hq-timer-mirror';
   const KBD_CLASS = 'hq-timer-kbd'; // must be declared before installHideStyle() runs at document-start
   const BROWSE_HTML_CLASS = 'hq-browse-page'; // on <html> while the card browser is shown; declared before installHideStyle() runs
+  const COUNTRY_FALLBACK_CLASS = 'hq-country-fallback'; // on our country list when it couldn't load: the site's table shows again
   const NAVSYM_CLASS = 'hq-timer-navsym'; // wraps the ▶/⇋/→ glyph so we can hide it via CSS
   const NAV_HIDE_CLASS = 'hq-nav-hide';   // hides end-of-quiz nav buttons during the pause
   // On <html> while the end-of-quiz buttons wait for the practice-more
@@ -928,6 +929,59 @@
         background: var(--bg, #f0f0ff) !important;
         color: var(--text, #222) !important;
       }
+      /* The country page (/country/<code>), recognized by the site's own
+         "← other countries" line: its filter box, quiz table and pager are
+         always hidden - our list replaces them - unless our list says it
+         couldn't load. No state or class to set, so nothing for the
+         site's re-renders to undo. */
+      main:has(> [class*="country-module"][class*="__back"]):not(:has(> .${COUNTRY_FALLBACK_CLASS}))
+        > :is([class*="sortable-table-module"][class*="__search"], table[class*="quiz-table-module"], [class*="sortable-table-module"][class*="__pages"]) {
+        display: none !important;
+      }
+      /* Laid out like the card browser: a centered column, its search box,
+         rows separated by thin lines. */
+      .hq-country {
+        max-width: var(--max-width, 1200px);
+        margin: 14px auto 40px;
+        padding: 0 16px;
+      }
+      .hq-country .hq-country-tools { margin: 0 0 8px; }
+      /* The site shows a link's title attribute in a bar along the bottom
+         on hover (a:before with attr(title)); not on our list. */
+      .hq-country a::before { content: none !important; }
+      .hq-country .hq-country-search {
+        width: 100%;
+        max-width: 420px;
+        font-size: 16px;
+        padding: 6px 10px;
+        border: 1px solid var(--hl, #95f);
+        border-radius: 8px;
+        background: var(--bg, #fff);
+        color: var(--text, #222);
+        box-sizing: border-box;
+      }
+      .hq-country .hq-country-count { margin-left: 8px; opacity: 0.7; }
+      .hq-country .hq-country-error { color: var(--warning-shade, #c33); }
+      .hq-country table.hq-country-table { width: 100%; border-collapse: collapse; }
+      .hq-country table.hq-country-table th { text-align: left; white-space: nowrap; padding: 4px 8px; }
+      .hq-country table.hq-country-table th.hq-sortable { cursor: pointer; user-select: none; }
+      .hq-country table.hq-country-table td {
+        vertical-align: top;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--bg-minishade, #e0e0ff);
+      }
+      /* title, by, updated */
+      .hq-country table.hq-country-table :is(th, td):nth-child(n+2):nth-child(-n+4) { text-align: center; }
+      .hq-country table.hq-country-table td:nth-child(4) { white-space: nowrap; }
+      .hq-country button {
+        font: inherit;
+        border: 1px solid var(--hl, #95f);
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text, #222);
+        padding: 2px 10px;
+        cursor: pointer;
+      }
       .hq-browse {
         max-width: var(--max-width, 1200px);
         margin: 20px auto 40px;
@@ -983,6 +1037,17 @@
     // fall back to <html> at document-start when head isn't there yet.
     (document.head || document.documentElement).appendChild(style);
     hideStyleEl = style;
+  }
+
+  // The site's start-up (React hydration) can throw away nodes it doesn't
+  // know: our stylesheet, and our country list. Waiting for the next pass
+  // let the site's own version flash up meanwhile; this puts both back the
+  // moment they go, before the browser paints.
+  function installStyleKeeper() {
+    new MutationObserver(() => {
+      if (hideStyleEl && !hideStyleEl.isConnected) ensureHideStyle();
+      if (countryState && !countryState.root.isConnected) ensureCountryPage();
+    }).observe(document, { childList: true, subtree: true });
   }
 
   function ensureHideStyle() {
@@ -1048,6 +1113,7 @@
 
   // Apply immediately at document-start, before first render
   installHideStyle();
+  installStyleKeeper();
   if (pageMode()) {
     hideQuestion();
   }
@@ -2388,6 +2454,9 @@
   function onUrlChange() {
     if (location.href === lastUrl) return;
     lastUrl = location.href;
+    // In-app navigation onto (or off) a country page: hide the site's table
+    // right away, not on the next poll.
+    ensureCountryPage();
     const active = !!pageMode();
     setActive(active);
     if (active) {
@@ -4593,6 +4662,309 @@
     if (document.title !== title) document.title = title;
   }
 
+  // ---------- Country quiz list ----------
+
+  // /country/<code>: the site's table shows 50 quizzes per page and its
+  // filter only searches the page on screen. The page's HTML carries the
+  // country's whole quiz list in its React payload, though, so we read it
+  // from there and show every quiz at once, with a search like the card
+  // browser's.
+
+  function countryCodeFromPath(pathname) {
+    const m = /^\/country\/([a-z]{2})\/?$/i.exec(String(pathname || ''));
+    return m ? m[1].toLowerCase() : null;
+  }
+
+  // The React (RSC) payload a Next.js page embeds: the string arguments of
+  // its self.__next_f.push([1, "..."]) scripts, joined.
+  function nextPayloadText(html) {
+    const re = /self\.__next_f\.push\(\[1,("(?:[^"\\]|\\.)*")\]\)/g;
+    let out = '';
+    let m;
+    while ((m = re.exec(String(html || '')))) {
+      try { out += JSON.parse(m[1]); } catch (e) { /* not a plain string - skip */ }
+    }
+    return out;
+  }
+
+  // Every quiz object in the payload - the ones starting with "creator",
+  // as the site's quiz lists do - each once, in payload order.
+  function parseCountryQuizzes(text) {
+    const OPEN = 123; // the brace characters, as codes
+    const CLOSE = 125;
+    const QUOTE = 34;
+    const BACKSLASH = 92;
+    const out = [];
+    const seen = new Set();
+    let from = 0;
+    for (;;) {
+      const at = text.indexOf('"creator":', from);
+      if (at < 0) break;
+      from = at + 1;
+      const start = at - 1;
+      if (start < 0 || text.charCodeAt(start) !== OPEN) continue;
+      // Find the object's end, skipping over strings.
+      let depth = 0;
+      let end = -1;
+      for (let i = start; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        if (c === QUOTE) {
+          for (i++; i < text.length && text.charCodeAt(i) !== QUOTE; i++) {
+            if (text.charCodeAt(i) === BACKSLASH) i++;
+          }
+        } else if (c === OPEN) {
+          depth++;
+        } else if (c === CLOSE && --depth === 0) {
+          end = i;
+          break;
+        }
+      }
+      if (end < 0) break;
+      let obj;
+      try { obj = JSON.parse(text.slice(start, end + 1)); } catch (e) { continue; }
+      if (!obj || typeof obj.title !== 'string' || !/^[A-Za-z0-9]{12}$/.test(String(obj.id)) || seen.has(obj.id)) continue;
+      seen.add(obj.id);
+      const creator = obj.creator || {};
+      const updated = (obj.events || {}).updated;
+      out.push({
+        id: obj.id,
+        title: obj.title,
+        author: creator.handle || '',
+        authorName: creator.displayName || '',
+        countries: Array.isArray(obj.country) ? obj.country : [],
+        featured: !!obj.highlighted,
+        description: obj.description || '',
+        // "$D<ISO date>" in the payload, a timestamp in the API's lists.
+        updated: typeof updated === 'number' ? updated
+          : typeof updated === 'string' ? (Date.parse(updated.replace(/^\$D/, '')) || null) : null,
+      });
+    }
+    return out;
+  }
+
+  // The site's table order, as it sorts the list once its scripts have
+  // loaded (its default sort on the featured column): featured quizzes
+  // first, each group by title.
+  function siteCountryOrder(list) {
+    const byTitle = (a, b) => String(a.title).localeCompare(String(b.title));
+    const featured = list.filter((q) => q.featured).sort(byTitle);
+    return featured.concat(list.filter((q) => !q.featured).sort(byTitle));
+  }
+
+  // Like the card browser: every word has to appear, in the title, the
+  // author or the description; case and accents don't matter.
+  function countryQuizMatches(quiz, query) {
+    const words = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+    if (!words.length) return true;
+    const text = normalizeSearchText([quiz.title, quiz.author, quiz.authorName, quiz.description].join(' '));
+    return words.every((word) => text.includes(word));
+  }
+
+  // A sorted copy: `key` null keeps the given order (the site's);
+  // 'title' / 'author' in natural order ("2" before "10"), 'updated' by time.
+  function sortCountryQuizzes(list, key, dir) {
+    const copy = list.slice();
+    if (!key) return copy;
+    const sign = dir === 'desc' ? -1 : 1;
+    const cmp = key === 'updated'
+      ? (a, b) => (a.updated || 0) - (b.updated || 0)
+      : key === 'author'
+        ? (a, b) => String(a.authorName || a.author || '').localeCompare(String(b.authorName || b.author || ''), undefined, { numeric: true, sensitivity: 'base' })
+        : (a, b) => String(a[key] || '').localeCompare(String(b[key] || ''), undefined, { numeric: true, sensitivity: 'base' });
+    return copy.sort((a, b) => sign * cmp(a, b));
+  }
+
+  // "at" -> the Austrian flag, from its two regional-indicator letters.
+  function flagEmoji(code) {
+    if (!/^[a-z]{2}$/i.test(String(code || ''))) return '';
+    return String.fromCodePoint(...String(code).toUpperCase().split('').map((ch) => 0x1F1E6 + ch.charCodeAt(0) - 65));
+  }
+
+  // dd/mm/yyyy, as the site writes its dates.
+  function formatSiteDate(ms) {
+    if (typeof ms !== 'number' || !isFinite(ms)) return '';
+    const d = new Date(ms);
+    const two = (n) => String(n).padStart(2, '0');
+    return two(d.getDate()) + '/' + two(d.getMonth() + 1) + '/' + d.getFullYear();
+  }
+
+  const COUNTRY_COLUMNS = [
+    { key: null, label: '' },
+    { key: 'title', label: 'title' },
+    { key: 'author', label: 'by' },
+    { key: 'updated', label: 'updated' },
+    { key: null, label: 'description' },
+  ];
+  let countryState = null; // the open country list, see startCountryPage()
+
+  function startCountryPage(code) {
+    const root = makeEl('div', 'hq-country');
+    const tools = makeEl('p', 'hq-country-tools');
+    const search = makeEl('input', 'hq-country-search');
+    search.type = 'search';
+    search.placeholder = 'search title, author, description…';
+    const count = makeEl('span', 'hq-country-count');
+    tools.append(search, count);
+    const status = makeEl('p', 'hq-country-status');
+    const retry = makeEl('button', 'hq-country-retry', 'retry');
+    const table = makeEl('table', 'hq-country-table');
+    const headRow = makeEl('tr');
+    const tbody = makeEl('tbody');
+    table.append(makeEl('thead'), tbody);
+    table.tHead.appendChild(headRow);
+    root.append(tools, status, table);
+    const state = {
+      code, root, search, count, status, retry, table, headRow, tbody,
+      quizzes: null, rows: new Map(), status_: 'loading', error: '',
+      sortKey: null, sortDir: 'asc', focused: false,
+    };
+    COUNTRY_COLUMNS.forEach((col) => {
+      const th = makeEl('th', col.key ? 'hq-sortable' : '', col.label);
+      if (col.key) {
+        th.addEventListener('click', () => {
+          if (state.sortKey === col.key) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+          else { state.sortKey = col.key; state.sortDir = col.key === 'updated' ? 'desc' : 'asc'; }
+          renderCountryList(state);
+        });
+      }
+      headRow.appendChild(th);
+    });
+    search.addEventListener('input', () => renderCountryList(state));
+    retry.addEventListener('click', () => loadCountryQuizzes(state));
+    countryState = state;
+    loadCountryQuizzes(state);
+  }
+
+  function loadCountryQuizzes(state) {
+    state.status_ = 'loading';
+    renderCountryPage(state);
+    (rawFetch || fetch)('/country/' + encodeURIComponent(state.code), { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.text() : Promise.reject(new Error('HTTP ' + res.status))))
+      .then((html) => {
+        if (countryState !== state) return;
+        const quizzes = parseCountryQuizzes(nextPayloadText(html));
+        // No quizzes read although the page links some: the payload's
+        // format changed under us - fall back to the site's own table.
+        if (!quizzes.length && /href="\/quiz\/[A-Za-z0-9]{12}"/.test(html)) {
+          state.status_ = 'unreadable';
+        } else {
+          state.quizzes = siteCountryOrder(quizzes);
+          state.status_ = 'ready';
+        }
+        renderCountryPage(state);
+      })
+      .catch((err) => {
+        if (countryState !== state) return;
+        state.status_ = 'failed';
+        state.error = err && err.message ? err.message : String(err);
+        renderCountryPage(state);
+      });
+  }
+
+  function renderCountryPage(state) {
+    const ready = state.status_ === 'ready';
+    // Couldn't load or read the list: let the site's table show again.
+    state.root.classList.toggle(COUNTRY_FALLBACK_CLASS, state.status_ === 'failed' || state.status_ === 'unreadable');
+    state.search.hidden = !ready;
+    state.table.hidden = !ready;
+    state.status.replaceChildren();
+    state.status.className = 'hq-country-status';
+    // Loading shows nothing: it's over before a message could be read.
+    if (state.status_ === 'unreadable') {
+      state.status.className = 'hq-country-status hq-country-error';
+      state.status.textContent = 'couldn\'t read the full quiz list, showing the site\'s table';
+    } else if (state.status_ === 'failed') {
+      state.status.className = 'hq-country-status hq-country-error';
+      state.status.append('couldn\'t load the quiz list (' + state.error + ') ', state.retry);
+    } else if (ready && !state.quizzes.length) {
+      state.status.textContent = 'no quizzes';
+    }
+    state.status.hidden = !state.status.firstChild;
+    if (ready) renderCountryList(state);
+  }
+
+  function countryRow(state, quiz) {
+    let tr = state.rows.get(quiz.id);
+    if (tr) return tr;
+    tr = makeEl('tr');
+    const star = makeEl('td', '', quiz.featured ? '☆' : '');
+    const title = makeEl('td');
+    const flags = quiz.countries.map(flagEmoji).join('');
+    if (flags) title.append(flags + ' ');
+    const link = makeEl('a', '', quiz.title);
+    link.href = '/quiz/' + encodeURIComponent(quiz.id);
+    title.appendChild(link);
+    const by = makeEl('td');
+    if (quiz.author) {
+      // Like the site: the display name, linking to the account's handle.
+      const a = makeEl('a', '', quiz.authorName || quiz.author);
+      a.href = '/account/' + encodeURIComponent(quiz.author);
+      by.appendChild(a);
+    }
+    const updated = makeEl('td', '', formatSiteDate(quiz.updated));
+    const description = makeEl('td');
+    if (quiz.description) {
+      const span = makeEl('span', '', quiz.description);
+      span.title = quiz.description;
+      description.appendChild(span);
+    }
+    tr.append(star, title, by, updated, description);
+    state.rows.set(quiz.id, tr);
+    return tr;
+  }
+
+  function renderCountryList(state) {
+    if (!state.quizzes) return;
+    const query = state.search.value;
+    const shown = sortCountryQuizzes(state.quizzes.filter((q) => countryQuizMatches(q, query)), state.sortKey, state.sortDir);
+    const total = state.quizzes.length;
+    state.count.textContent = shown.length === total
+      ? total + (total === 1 ? ' quiz' : ' quizzes')
+      : shown.length + ' of ' + total + ' quizzes';
+    Array.from(state.headRow.children).forEach((th, i) => {
+      const col = COUNTRY_COLUMNS[i];
+      const arrow = col.key && col.key === state.sortKey ? (state.sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+      th.textContent = col.label + arrow;
+    });
+    state.tbody.replaceChildren(...shown.map((q) => countryRow(state, q)));
+  }
+
+  // React marks the DOM nodes it manages with a "__reactFiber$<id>" property.
+  function isReactHydrated(el) {
+    return Object.keys(el).some((k) => k.startsWith('__reactFiber$'));
+  }
+
+  // Called on every poll pass, on every page: shows our list on
+  // /country/<code> right after the site's "← other countries" line (or its
+  // heading), puts it back if the site re-renders, tears it down elsewhere.
+  function ensureCountryPage() {
+    const code = countryCodeFromPath(location.pathname);
+    if (!code || (countryState && countryState.code !== code)) {
+      if (countryState) {
+        countryState.root.remove();
+        countryState = null;
+      }
+      if (!code) return;
+    }
+    if (!countryState) startCountryPage(code);
+    const state = countryState;
+    const main = document.querySelector('main');
+    if (!main) return;
+    // Not into the server's HTML before React has taken it over: an element
+    // it didn't render makes it throw that HTML away and redraw the page
+    // (React error 418). The site's table stays hidden by CSS meanwhile.
+    // Should React never take over (its scripts failed), go ahead anyway
+    // 2.5 s into the page load (it normally takes over well before that).
+    if (!isReactHydrated(main) && performance.now() < 2500) return;
+    const anchor = main.querySelector('[class*="country-module"][class*="__back"]') || main.querySelector('h1');
+    if (!anchor) return;
+    if (anchor.nextElementSibling !== state.root) anchor.after(state.root);
+    if (!state.focused && state.status_ === 'ready') {
+      state.search.focus();
+      state.focused = true;
+    }
+  }
+
   const BROWSE_LINK_CLASS = 'hq-browse-link';
 
   // The quiz id on a normal (non-anki) quiz page, /quiz/<id> without
@@ -4709,6 +5081,7 @@
   function pollPass() {
     // Not anki pages, so these have to run before the anki-page gate below.
     ensureBrowsePage();
+    ensureCountryPage();
     ensureNormalQuizBrowseLink();
     // Runtime page check: SPA navigation (or the site's mode radio) can move
     // us to pages where all features must stay off.

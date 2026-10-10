@@ -449,3 +449,98 @@ test('settingsLayout groups each page\'s rows under timer / grading / flow / dis
     'warning',
   ]);
 });
+
+test('countryCodeFromPath only matches a single country page', () => {
+  const { countryCodeFromPath } = load('countryCodeFromPath');
+  assert.equal(countryCodeFromPath('/country/at'), 'at');
+  assert.equal(countryCodeFromPath('/country/AR/'), 'ar');
+  assert.equal(countryCodeFromPath('/country'), null);
+  assert.equal(countryCodeFromPath('/country/'), null);
+  assert.equal(countryCodeFromPath('/country/at/x'), null);
+  assert.equal(countryCodeFromPath('/quiz/at'), null);
+});
+
+// A country page as the site serves it: the quiz list sits in the React
+// payload pushes, an object may be split across two of them.
+function countryPageHtml(objects) {
+  const data = 'a:["$","main",null,{"rows":' + JSON.stringify(objects) + '}]\n';
+  const half = Math.floor(data.length / 2);
+  const push = (s) => '<script>self.__next_f.push([1,' + JSON.stringify(s) + '])</script>';
+  return '<html><body><main><h1>x</h1></main>' +
+    '<script>(self.__next_f=self.__next_f||[]).push([0])</script>' +
+    push(data.slice(0, half)) + push(data.slice(half)) + '</body></html>';
+}
+
+test('parseCountryQuizzes reads every quiz from the page\'s embedded data', () => {
+  const { nextPayloadText, parseCountryQuizzes } = load('nextPayloadText', 'parseCountryQuizzes');
+  const html = countryPageHtml([
+    { creator: { displayName: 'emily', handle: 'emily', id: 1 }, description: 'Phone "codes"', events: { created: '$D2025-03-10T14:28:11.482Z', updated: '$D2025-03-19T15:07:38.013Z' }, id: '9Dc60yIVkxsQ', title: 'Austria phone codes', country: ['at'], highlighted: true, visible: true },
+    { creator: { displayName: 'Steve', handle: 'steve', id: 5 }, description: null, events: { updated: 1741957153411 }, id: '0MpjHsOeh1Oi', title: 'Austria: Municipalities', country: ['at', 'de'], highlighted: false, visible: true },
+    // the same quiz again (e.g. in a second list): kept once
+    { creator: { displayName: 'Steve', handle: 'steve', id: 5 }, id: '0MpjHsOeh1Oi', title: 'Austria: Municipalities', country: ['at'] },
+    // not a quiz (no title / no 12-char id)
+    { creator: { displayName: 'x', handle: 'x', id: 9 }, id: 'short' },
+  ]);
+  const quizzes = parseCountryQuizzes(nextPayloadText(html));
+  assert.deepEqual(quizzes.map((q) => q.id), ['9Dc60yIVkxsQ', '0MpjHsOeh1Oi']);
+  assert.deepEqual(quizzes[0], {
+    id: '9Dc60yIVkxsQ', title: 'Austria phone codes', author: 'emily', authorName: 'emily',
+    countries: ['at'], featured: true, description: 'Phone "codes"', updated: Date.parse('2025-03-19T15:07:38.013Z'),
+  });
+  assert.equal(quizzes[1].description, '');
+  assert.equal(quizzes[1].updated, 1741957153411);
+  assert.deepEqual(quizzes[1].countries, ['at', 'de']);
+  assert.deepEqual(parseCountryQuizzes(nextPayloadText('<html>nothing</html>')), []);
+});
+
+test('countryQuizMatches needs every word in title, author or description', () => {
+  const { normalizeSearchText, countryQuizMatches } = load('normalizeSearchText', 'countryQuizMatches');
+  const q = { title: 'Austria: Municipalities (Tirol)', author: 'apfeloxid', authorName: 'Apfel', description: 'Gemeinden in Österreich' };
+  assert.equal(countryQuizMatches(q, ''), true);
+  assert.equal(countryQuizMatches(q, 'tirol municip'), true);
+  assert.equal(countryQuizMatches(q, 'MUNICIPALITIES apfeloxid'), true);
+  assert.equal(countryQuizMatches(q, 'osterreich'), true);
+  assert.equal(countryQuizMatches(q, 'tirol salzburg'), false);
+});
+
+test('sortCountryQuizzes keeps the site order by default and sorts by column', () => {
+  const { sortCountryQuizzes } = load('sortCountryQuizzes');
+  const list = [
+    { id: 'a', title: 'Districts 10', author: 'bob', updated: 3 },
+    { id: 'b', title: 'districts 2', author: 'Al', updated: 1 },
+    { id: 'c', title: 'Cities', author: 'cy', updated: 2 },
+  ];
+  const ids = (l) => l.map((q) => q.id).join('');
+  assert.equal(ids(sortCountryQuizzes(list, null, 'asc')), 'abc');
+  assert.equal(ids(sortCountryQuizzes(list, 'title', 'asc')), 'cba');
+  assert.equal(ids(sortCountryQuizzes(list, 'title', 'desc')), 'abc');
+  assert.equal(ids(sortCountryQuizzes(list, 'author', 'asc')), 'bac');
+  assert.equal(ids(sortCountryQuizzes(list, 'updated', 'desc')), 'acb');
+  assert.equal(ids(list), 'abc'); // not sorted in place
+});
+
+test('flagEmoji and formatSiteDate', () => {
+  const { flagEmoji, formatSiteDate } = load('flagEmoji', 'formatSiteDate');
+  assert.equal(flagEmoji('at'), '\u{1F1E6}\u{1F1F9}');
+  assert.equal(flagEmoji('x'), '');
+  assert.equal(formatSiteDate(new Date(2025, 2, 4).getTime()), '04/03/2025');
+  assert.equal(formatSiteDate(null), '');
+});
+
+test('siteCountryOrder lists featured quizzes first, each group by title', () => {
+  const { siteCountryOrder } = load('siteCountryOrder');
+  // as the site's table sorts after it loads (seen on /country/at)
+  const list = [
+    { id: 'p1', title: 'Austria subdivisions (lvl2): districts', featured: true },
+    { id: 'p2', title: 'Austria phone codes (2 digits)', featured: true },
+    { id: 'v', title: 'Vienna District numbers', featured: false },
+    { id: 'o', title: '\u00d6sterreich districts', featured: false },
+    { id: 'm', title: 'Austria: Municipalities', featured: false },
+    { id: 'w', title: 'Austria West', featured: false },
+    { id: 'pr', title: 'Austria - Provinces', featured: false },
+    { id: 'lo', title: 'austria phone code lower austria 2 digits', featured: false },
+    { id: 'pc', title: 'Austria phone codes (1 digit)', featured: false },
+  ];
+  assert.deepEqual(siteCountryOrder(list).map((q) => q.id), ['p2', 'p1', 'pr', 'lo', 'pc', 'w', 'm', 'o', 'v']);
+  assert.equal(list[0].id, 'p1'); // not in place
+});
