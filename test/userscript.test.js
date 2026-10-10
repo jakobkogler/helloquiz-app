@@ -132,6 +132,54 @@ test('chooseNextQuiz starts over from the live list at the end', () => {
   assert.deepEqual(chooseNextQuiz(order, [q('A', 0)], 'D'), { id: null, order: [q('A', 0)] });
 });
 
+test('chooseNextQuiz goes on to quizzes due later today (finish today\'s cards)', () => {
+  const { chooseNextQuiz } = load('chooseNextQuiz', 'isSameLocalDay');
+  const now = new Date(2026, 9, 9, 17, 0).getTime();
+  const at = (h, m = 0, day = 9) => new Date(2026, 9, day, h, m).getTime();
+  const q = (id, overdueCount, due) => ({ id, title: id, overdueCount, due });
+  const order = [q('A', 3, at(9)), q('B', 1, at(10))];
+  const live = [q('A', 0, at(20)), q('B', 0, at(21)), q('C', 0, at(22, 2)), q('D', 0, at(19)),
+    q('E', 0, at(0, 30, 10)), q('F', 0, at(23, 59))];
+
+  // B was the last overdue quiz: on to the earliest one due later today
+  assert.deepEqual(chooseNextQuiz(order, live, 'B', now), { id: 'D', order: live });
+  // never the current quiz itself
+  assert.equal(chooseNextQuiz(order, live, 'D', now).id, 'A');
+  // overdue quizzes still come first
+  const liveOverdue = [q('G', 2, at(8)), ...live];
+  assert.equal(chooseNextQuiz(order, liveOverdue, 'B', now).id, 'G');
+  // only tomorrow's left: back to the list
+  const tomorrow = [q('B', 0, at(21)), q('E', 0, at(0, 30, 10))];
+  assert.equal(chooseNextQuiz(order, tomorrow, 'B', now).id, null);
+  // setting off (no time given): back to the list as before
+  assert.equal(chooseNextQuiz(order, live, 'B').id, null);
+  assert.equal(chooseNextQuiz(order, live, 'B', null).id, null);
+});
+
+test('chooseNextQuiz walks on through the order into quizzes due later today', () => {
+  const { chooseNextQuiz } = load('chooseNextQuiz', 'isSameLocalDay');
+  const now = new Date(2026, 9, 9, 17, 0).getTime();
+  const at = (h, m = 0, day = 9) => new Date(2026, 9, day, h, m).getTime();
+  const q = (id, overdueCount, due) => ({ id, title: id, overdueCount, due });
+  // as on /learn: A, B overdue, then C, D due later today, E tomorrow
+  const order = [q('A', 3, at(9)), q('B', 1, at(10)), q('C', 0, at(19)), q('D', 0, at(21)),
+    q('E', 0, at(8, 0, 10))];
+  // meanwhile A is done (due tomorrow) and X has become overdue
+  const live = [q('X', 2, at(16)), q('C', 0, at(19)), q('D', 0, at(21)), q('B', 0, at(9, 0, 10)),
+    q('A', 0, at(9, 0, 10)), q('E', 0, at(8, 0, 10))];
+
+  // after B: on to C in the order, not back to the overdue X
+  assert.deepEqual(chooseNextQuiz(order, live, 'B', now), { id: 'C', order });
+  assert.equal(chooseNextQuiz(order, live, 'C', now).id, 'D');
+  // D was the last one due today: start over from the live list (X)
+  assert.deepEqual(chooseNextQuiz(order, live, 'D', now), { id: 'X', order: live });
+  // a quiz due today that has been done meanwhile (live: tomorrow) is skipped
+  const liveCDone = live.map((x) => (x.id === 'C' ? q('C', 0, at(7, 0, 10)) : x));
+  assert.equal(chooseNextQuiz(order, liveCDone, 'B', now).id, 'D');
+  // setting off: due-later quizzes are skipped as before, X is next
+  assert.equal(chooseNextQuiz(order, live, 'B').id, 'X');
+});
+
 test('SCRIPT_VERSION and UPDATE_URL match the userscript header', () => {
   const header = (name) => source.match(new RegExp(`^// @${name}\\s+(\\S+)`, 'm'))[1];
   assert.equal(source.match(/const SCRIPT_VERSION = '([^']+)'/)[1], header('version'));
@@ -309,7 +357,7 @@ test('practicePreviewText words the preview on the practice more button', () => 
 });
 
 test('shouldFinishToday continues while the next card is due today', () => {
-  const { shouldFinishToday } = load('shouldFinishToday');
+  const { shouldFinishToday } = load('shouldFinishToday', 'isSameLocalDay');
   const at = (d, h, m = 0) => new Date(2026, 9, d, h, m).getTime(); // local time
   const now = at(4, 20); // 8 PM
   assert.equal(shouldFinishToday({ kind: 'due', count: 3 }, now), true);

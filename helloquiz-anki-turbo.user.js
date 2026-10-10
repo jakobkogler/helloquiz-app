@@ -2710,26 +2710,41 @@
   function normalizeQuizList(list) {
     return (list || [])
       .filter((q) => q && typeof q.id === 'string' && !q.deletedAt)
-      .map((q) => ({ id: q.id, title: q.title || '', overdueCount: Number(q.overdueCount) || 0 }));
+      .map((q) => ({
+        id: q.id,
+        title: q.title || '',
+        overdueCount: Number(q.overdueCount) || 0,
+        due: Number(q.due) || 0, // when its earliest card is (or was) due
+      }));
   }
 
   // The quiz to go to after `currentId`: the next one in the remembered
-  // `order` that (per the live list, else per its remembered count) still
-  // has overdue cards. When there is none, start over from the live list:
-  // it becomes the new order, and the pick is its first overdue quiz other
-  // than the current one. Returns { id (or null), order (to remember) }.
-  function chooseNextQuiz(order, live, currentId) {
-    const liveCount = Object.create(null);
-    for (const q of live || []) liveCount[q.id] = q.overdueCount;
-    const isOverdue = (q) => (q.id in liveCount ? liveCount[q.id] : q.overdueCount) > 0;
+  // `order` that (per the live list, else per what was remembered) still
+  // has overdue cards - or, with `todayNowMs` (finish today's cards: the
+  // current time), cards due later today. When there is none, start over
+  // from the live list: it becomes the new order, and the pick is its first
+  // overdue quiz other than the current one, else (with `todayNowMs`) the
+  // one whose next card comes up earliest later today. Returns { id (or
+  // null), order (to remember) }.
+  function chooseNextQuiz(order, live, currentId, todayNowMs) {
+    const liveById = Object.create(null);
+    for (const q of live || []) liveById[q.id] = q;
+    const current = (q) => liveById[q.id] || q;
+    const isOverdue = (q) => current(q).overdueCount > 0;
+    const isDueToday = (q) => todayNowMs != null && !!current(q).due &&
+      isSameLocalDay(current(q).due, todayNowMs);
     const index = (order || []).findIndex((q) => q.id === currentId);
     if (index !== -1) {
-      const next = order.slice(index + 1).find((q) => q.id !== currentId && isOverdue(q));
+      const next = order.slice(index + 1).find((q) => q.id !== currentId && (isOverdue(q) || isDueToday(q)));
       if (next) return { id: next.id, order: order };
     }
     if (!live || !live.length) return { id: null, order: order || [] };
     const first = live.find((q) => q.id !== currentId && isOverdue(q));
-    return { id: first ? first.id : null, order: live };
+    if (first) return { id: first.id, order: live };
+    const today = live
+      .filter((q) => q.id !== currentId && isDueToday(q))
+      .sort((a, b) => a.due - b.due)[0];
+    return { id: today ? today.id : null, order: live };
   }
 
   function loadNextQuizOrder() {
@@ -2772,7 +2787,8 @@
       .catch(() => { /* use the last list seen */ })
       .then(() => {
         goingToNextQuiz = false;
-        const { id, order } = chooseNextQuiz(loadNextQuizOrder(), liveQuizList, currentQuizId());
+        const { id, order } = chooseNextQuiz(loadNextQuizOrder(), liveQuizList, currentQuizId(),
+          finishTodaysCards ? Date.now() : null);
         saveNextQuizOrder(order);
         if (DEBUG) console.log('[helloquiz-timer] next quiz ->', id);
         if (!id) {
@@ -2874,10 +2890,14 @@
     if (!preview || preview.kind === 'none') return false;
     if (preview.kind === 'due') return true;
     if (preview.dueMs === null || preview.dueMs <= nowMs) return true;
-    const due = new Date(preview.dueMs);
-    const now = new Date(nowMs);
-    return due.getFullYear() === now.getFullYear() && due.getMonth() === now.getMonth() &&
-      due.getDate() === now.getDate();
+    return isSameLocalDay(preview.dueMs, nowMs);
+  }
+
+  // Both times on the same calendar day, local time.
+  function isSameLocalDay(aMs, bMs) {
+    const a = new Date(aMs);
+    const b = new Date(bMs);
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   }
 
   let practicePreviewFailed = false;
@@ -3237,7 +3257,8 @@
 
   const FINISH_TODAY_TIP = 'Normally a quiz ends once its overdue cards are done. With this on, ' +
     'it carries straight on with every card that becomes due later today, so you finish the whole ' +
-    'day in one go instead of coming back for each card. It stops at the first card due tomorrow.';
+    'day in one go instead of coming back for each card. It stops at the first card due tomorrow. ' +
+    'Next quiz then also counts quizzes with cards due later today, not just overdue ones.';
   const PAUSE_TIP = 'After a wrong answer (or a timeout) the quiz stops on the question ' +
     'you just missed, so you can study the map before moving on. Click the map or ' +
     'press 1 to continue. Replaces the site\'s "force correct click", which is broken ' +

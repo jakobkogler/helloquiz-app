@@ -28,11 +28,13 @@ site regularly, on `/learn` and while in a quiz.
 ```
 
 - `overdueCount` — overdue cards, as a string.
-- `due` — a timestamp in ms (the list is sorted by it); its exact meaning
-  isn't pinned down.
+- `due` — when the quiz's earliest card is due, as a timestamp in ms (in
+  the past for overdue quizzes, otherwise when the next card comes up);
+  the list is sorted by it.
 
 The userscript remembers this order (as of `/learn`) for its *next quiz*
-button, and uses the latest response for the current overdue counts. The
+button, and uses the latest response for the current overdue counts (and,
+with *finish today's cards*, `due` to find the quizzes due later today). The
 card browser uses it to tell whether a quiz is in the deck (only then can its
 cards be punished).
 
