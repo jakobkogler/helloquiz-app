@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.16.0
+// @version      1.16.1
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints. Also on the normal quiz pages, where answers can grade the quiz's anki cards.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -18,7 +18,7 @@
   const DEBUG = false;
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
-  const SCRIPT_VERSION = '1.16.0';
+  const SCRIPT_VERSION = '1.16.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
@@ -3736,7 +3736,9 @@
   const FINISH_TODAY_TIP = 'Normally a quiz ends once its overdue cards are done. With this on, ' +
     'it carries straight on with every card that becomes due later today, so you finish the whole ' +
     'day in one go instead of coming back for each card. It stops at the first card due tomorrow. ' +
-    'Next quiz then also counts quizzes with cards due later today, not just overdue ones.';
+    'Next quiz then also counts quizzes with cards due later today, not just overdue ones.\n' +
+    '\u26A0\uFE0F Due to a technical limitation of the HelloQuiz backend, cards that aren\'t due yet ' +
+    'come back immediately when you get them wrong.';
   const PAUSE_TIP = 'After a wrong answer (or a timeout) the quiz stops on the question ' +
     'you just missed, so you can study the map before moving on. Click the map or ' +
     'press 1 to continue. Replaces the site\'s "force correct click", which is broken ' +
