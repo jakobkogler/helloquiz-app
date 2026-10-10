@@ -423,3 +423,29 @@ test('normalAnkiRating picks the anki rating for an answer in a normal game', ()
   assert.equal(normalAnkiRating(Object.assign({ correct: false, timedOut: false, fraction: 0.8 }, correctOnly)), null);
   assert.equal(normalAnkiRating(Object.assign({ correct: true, timedOut: true, fraction: 0 }, correctOnly)), null);
 });
+
+test('settingsLayout groups each page\'s rows under timer / grading / flow / display', () => {
+  const { settingsLayout } = load('settingsLayout');
+  assert.deepEqual(settingsLayout({ normal: false, quizOpen: true, notInDeck: false }), [
+    'group:timer', 'timer', 'quizTimer',
+    'group:grading', 'autoGrade',
+    'group:flow', 'pause', 'finishToday',
+    'group:display', 'cardsLeft',
+    'warning',
+  ]);
+  assert.deepEqual(settingsLayout({ normal: true, quizOpen: true, notInDeck: false }), [
+    'group:timer', 'timer', 'quizTimer',
+    'group:grading', 'gradeWrong', 'gradeCorrect',
+    'group:flow', 'pause', 'alwaysPause',
+    'group:display', 'cardsLeft',
+    'warning',
+  ]);
+  // no quiz title yet: no override row; quiz not in the deck: the note
+  assert.deepEqual(settingsLayout({ normal: true, quizOpen: false, notInDeck: true }), [
+    'group:timer', 'timer',
+    'group:grading', 'gradeWrong', 'gradeCorrect', 'deckNote',
+    'group:flow', 'pause', 'alwaysPause',
+    'group:display', 'cardsLeft',
+    'warning',
+  ]);
+});

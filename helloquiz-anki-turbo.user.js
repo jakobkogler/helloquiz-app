@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.15.0
+// @version      1.15.1
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints. Also on the normal quiz pages, where answers can grade the quiz's anki cards.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -18,7 +18,7 @@
   const DEBUG = false;
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
-  const SCRIPT_VERSION = '1.15.0';
+  const SCRIPT_VERSION = '1.15.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
@@ -899,6 +899,8 @@
         text-transform: none;
         letter-spacing: normal;
         opacity: 0.85;
+        /* A "\n" in the text starts a new line (e.g. before a warning). */
+        white-space: pre-line;
       }
       span.${HELP_TEXT_CLASS}.${HELP_OPEN_CLASS} {
         display: block;
@@ -3034,7 +3036,7 @@
     const count = findDueQuizUrls().length;
     const label = count === 0
       ? 'no quizzes due'
-      : 'open ' + count + ' due ' + (count === 1 ? 'quiz' : 'quizzes');
+      : count === 1 ? 'open the due quiz in a tab' : 'open all ' + count + ' due quizzes in tabs';
     if (btn.textContent !== label) btn.textContent = label;
     btn.disabled = count === 0;
     ensureOpenDueHelp(btn);
@@ -3688,15 +3690,14 @@
 
   const GRADE_WRONG_TIP = 'Grades the card on the anki page as failed ("again") when you answer it ' +
     'wrong here - or too slowly, once the countdown has run out. So playing the normal quiz also does ' +
-    'your anki reviews. Every answer counts: a missed card that "recycle missed answers" brings back ' +
-    'is graded again each time. Only for quizzes in your anki deck.';
+    'your anki reviews. To work, the quiz has to be added to your anki deck.';
 
   function gradeCorrectTip() {
     return 'Grades the card on the anki page when you answer it right here, from how much of the ' +
       'countdown was left: easy from ' + gradeAnkiEasy + '% up, good from ' + gradeAnkiGood + '% up, hard ' +
       'below that (separate from auto-grade by speed on the anki page). ' +
       (running ? speedSecondsText(gradeAnkiEasy, gradeAnkiGood) : 'With the countdown off it\'s always good.') + ' So playing the normal quiz also does your anki reviews. ' +
-      'Every answer counts, also a recycled card\'s. Only for quizzes in your anki deck. ' +
+      'To work, the quiz has to be added to your anki deck.\n' +
       '⚠️ Careful: every game grades the cards again, even ones that aren\'t due yet. ' +
       'Playing the quiz several times in a row pushes the cards you know further out each time, ' +
       'soon months into the future.';
@@ -3719,6 +3720,34 @@
 
   function removeSettingsPanel() {
     document.querySelectorAll('.' + SETTINGS_BLOCK_CLASS).forEach((el) => el.remove());
+  }
+
+  // The settings block's order: group headings ('group:<name>') and row
+  // keys, only the rows that apply to the page.
+  function settingsLayout(o) {
+    const rows = ['group:timer', 'timer'];
+    if (o.quizOpen) rows.push('quizTimer');
+    rows.push('group:grading');
+    if (o.normal) {
+      rows.push('gradeWrong', 'gradeCorrect');
+      if (o.notInDeck) rows.push('deckNote');
+    } else {
+      rows.push('autoGrade');
+    }
+    rows.push('group:flow', 'pause', o.normal ? 'alwaysPause' : 'finishToday');
+    rows.push('group:display', 'cardsLeft', 'warning');
+    return rows;
+  }
+
+  const SETTINGS_GROUP_TITLES = { timer: 'Timer', grading: 'Anki Grading', flow: 'Flow', display: 'Display' };
+
+  // A group's small label above its rows.
+  function makeGroupHeading(text) {
+    const p = document.createElement('p');
+    p.textContent = text;
+    p.style.cssText = 'margin: 10px 0 2px; font-size: 0.75em; font-weight: bold; ' +
+      'text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.6;';
+    return p;
   }
 
   // Add our options to the bottom of the site's own anki settings panel, so
@@ -3756,15 +3785,14 @@
     // Heading with a link to the script's repo
     const heading = document.createElement('p');
     const strong = document.createElement('strong');
-    strong.textContent = 'Anki Turbo Config';
-    heading.appendChild(strong);
-    heading.appendChild(document.createTextNode(' '));
+    strong.appendChild(document.createTextNode('Configuration for the '));
     const repoLink = document.createElement('a');
     repoLink.href = 'https://github.com/jakobkogler/helloquiz-app';
     repoLink.target = '_blank';
     repoLink.rel = 'noopener';
-    repoLink.textContent = '(GitHub)';
-    heading.appendChild(repoLink);
+    repoLink.textContent = 'Anki Turbo Userscript';
+    strong.appendChild(repoLink);
+    heading.appendChild(strong);
 
     // Restart the running countdown so a duration change takes effect at once.
     const restartTimer = () => {
@@ -3915,7 +3943,7 @@
     autoCheckbox.type = 'checkbox';
     autoCheckbox.checked = autoGrade;
     autoLabel.appendChild(autoCheckbox);
-    autoLabel.appendChild(document.createTextNode(' auto-grade by speed: easy '));
+    autoLabel.appendChild(document.createTextNode(' auto-grade by speed:'));
 
     const makePercentInput = (value) => {
       const input = document.createElement('input');
@@ -3974,11 +4002,15 @@
     });
 
     autoP.appendChild(autoLabel);
+    // Thresholds on their own line, the help badge up with the label (as in
+    // the normal page's correct-answers row).
+    autoP.appendChild(autoHelp.badge);
+    autoP.appendChild(document.createElement('br'));
+    autoP.appendChild(document.createTextNode('easy '));
     autoP.appendChild(easyInput);
     autoP.appendChild(document.createTextNode(' % / good '));
     autoP.appendChild(goodInput);
     autoP.appendChild(document.createTextNode(' %'));
-    autoP.appendChild(autoHelp.badge);
     autoP.appendChild(autoHelp.body);
     refreshAutoRow();
 
@@ -4056,7 +4088,7 @@
       ensureCardsPopover();
     });
     cardsLabel.appendChild(cardsCheckbox);
-    cardsLabel.appendChild(document.createTextNode(' show cards left'));
+    cardsLabel.appendChild(document.createTextNode(' show remaining cards'));
     cardsP.appendChild(cardsLabel);
     appendHelp(cardsP, normal ? PROGRESS_TIP : CARDS_TIP);
 
@@ -4077,7 +4109,7 @@
       row.appendChild(label);
       return { row, checkbox };
     };
-    const gradeWrong = makeGradeRow('grade anki: wrong answers', gradeAnkiWrong, (on) => {
+    const gradeWrong = makeGradeRow('wrong answers', gradeAnkiWrong, (on) => {
       gradeAnkiWrong = on;
       saveSettings();
     });
@@ -4095,7 +4127,7 @@
       gradeGoodInput.value = String(gradeAnkiGood);
       gradeCorrectHelp.body.textContent = gradeCorrectTip();
     };
-    const gradeCorrect = makeGradeRow('grade anki: correct answers by speed: easy ', gradeAnkiCorrect, (on) => {
+    const gradeCorrect = makeGradeRow('correct answers by speed:', gradeAnkiCorrect, (on) => {
       gradeAnkiCorrect = on;
       saveSettings();
       refreshGradeCorrectRow();
@@ -4116,11 +4148,15 @@
       }
       refreshGradeCorrectRow();
     });
+    // The thresholds go on their own line, the label is long enough as it is;
+    // the help badge stays up with the label.
+    gradeCorrect.row.appendChild(gradeCorrectHelp.badge);
+    gradeCorrect.row.appendChild(document.createElement('br'));
+    gradeCorrect.row.appendChild(document.createTextNode('easy '));
     gradeCorrect.row.appendChild(gradeEasyInput);
     gradeCorrect.row.appendChild(document.createTextNode(' % / good '));
     gradeCorrect.row.appendChild(gradeGoodInput);
     gradeCorrect.row.appendChild(document.createTextNode(' %'));
-    gradeCorrect.row.appendChild(gradeCorrectHelp.badge);
     gradeCorrect.row.appendChild(gradeCorrectHelp.body);
     refreshGradeCorrectRow();
     const deckNote = document.createElement('p');
@@ -4131,23 +4167,18 @@
     const warning = document.createElement('p');
     warning.className = FORCECLICK_WARNING_CLASS;
     warning.textContent = 'For city quizzes the "force correct click" mode is currently broken. Disable it if you want to use the "pause after mistakes" mode instead.';
-    warning.style.cssText = 'display:none; margin-top:6px; padding:6px 8px; border:1px solid #e0a800; border-radius:4px; background:rgba(255,193,7,0.15); font-size:0.9em;';
+    warning.style.cssText = 'display:none; margin-top:6px; padding:6px 8px; border:1px solid #dc3545; border-radius:4px; background:rgba(220,53,69,0.15); font-size:0.9em;';
 
     block.appendChild(separator);
     block.appendChild(heading);
-    block.appendChild(timerP);
-    if (currentQuizTitle) block.appendChild(quizP);
-    if (!normal) block.appendChild(autoP);
-    block.appendChild(pauseP);
-    if (normal) block.appendChild(alwaysPauseP);
-    if (!normal) block.appendChild(practiceP);
-    block.appendChild(cardsP);
-    if (normal) {
-      block.appendChild(gradeWrong.row);
-      block.appendChild(gradeCorrect.row);
-      if (notInDeck) block.appendChild(deckNote);
+    const rowEls = {
+      timer: timerP, quizTimer: quizP, autoGrade: autoP, gradeWrong: gradeWrong.row,
+      gradeCorrect: gradeCorrect.row, deckNote: deckNote, pause: pauseP, alwaysPause: alwaysPauseP,
+      finishToday: practiceP, cardsLeft: cardsP, warning: warning,
+    };
+    for (const k of settingsLayout({ normal: normal, quizOpen: !!currentQuizTitle, notInDeck: notInDeck })) {
+      block.appendChild(k.startsWith('group:') ? makeGroupHeading(SETTINGS_GROUP_TITLES[k.slice(6)]) : rowEls[k]);
     }
-    block.appendChild(warning);
     container.appendChild(block);
     updateForceClickWarning();
   }
