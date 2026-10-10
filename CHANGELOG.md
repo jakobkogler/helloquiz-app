@@ -4,6 +4,13 @@ All notable changes to the HelloQuiz Anki Turbo userscript, newest first.
 From 1.10.0 on, every version has its own section; older releases are
 grouped by minor version (each including its patch releases).
 
+## 1.16.2 — 2026-10-10
+
+- *Enable timer countdown* and *pause after mistakes* are set separately
+  for the anki page and the normal quiz page; switching one on or off no
+  longer changes the other. The normal page starts out with the anki
+  page's choice. The countdown's seconds stay shared.
+
 ## 1.16.1 — 2026-10-10
 
 - *Finish today's cards* warns in its help: due to a technical limitation

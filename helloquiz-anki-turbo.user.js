@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.16.1
+// @version      1.16.2
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints. Also on the normal quiz pages, where answers can grade the quiz's anki cards.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -18,7 +18,7 @@
   const DEBUG = false;
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
-  const SCRIPT_VERSION = '1.16.1';
+  const SCRIPT_VERSION = '1.16.2';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
@@ -63,8 +63,10 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         seconds: TIMER_SECONDS,
-        running: running,
-        reviewPause: reviewPause,
+        running: runningAnki,
+        runningNormal: runningNormal,
+        reviewPause: reviewPauseAnki,
+        reviewPauseNormal: reviewPauseNormal,
         finishTodaysCards: finishTodaysCards,
         perQuizSeconds: perQuizSeconds,
         autoGrade: autoGrade,
@@ -82,10 +84,19 @@
 
   const saved = loadSettings();
   let TIMER_SECONDS = typeof saved.seconds === 'number' && saved.seconds > 0 ? saved.seconds : 10;
-  let running = typeof saved.running === 'boolean' ? saved.running : true;
+  // The countdown's on/off switch, one per page kind: the anki page's
+  // (stored as "running", as before the split) and the normal quiz page's
+  // (starting out as a copy of it). `running` is the one of the page that's
+  // open - see syncPageSwitches(). "Pause after mistakes" is split the
+  // same way, below.
+  let runningAnki = typeof saved.running === 'boolean' ? saved.running : true;
+  let runningNormal = typeof saved.runningNormal === 'boolean' ? saved.runningNormal : runningAnki;
+  let running = runningAnki;
   // When true, pause after a wrong answer/timeout so you can study the map
   // before continuing. When false, jump straight to the next question.
-  let reviewPause = typeof saved.reviewPause === 'boolean' ? saved.reviewPause : true;
+  let reviewPauseAnki = typeof saved.reviewPause === 'boolean' ? saved.reviewPause : true;
+  let reviewPauseNormal = typeof saved.reviewPauseNormal === 'boolean' ? saved.reviewPauseNormal : reviewPauseAnki;
+  let reviewPause = reviewPauseAnki;
   // Click "practice more" by itself while the next card is due today. Off
   // by default - an expert feature.
   let finishTodaysCards = typeof saved.finishTodaysCards === 'boolean' ? saved.finishTodaysCards : false;
@@ -160,8 +171,12 @@
     // CURRENT value (not the factory default) in case a stray/older write
     // ever left one out.
     if (typeof data.seconds === 'number' && data.seconds > 0) TIMER_SECONDS = data.seconds;
-    if (typeof data.running === 'boolean') running = data.running;
-    if (typeof data.reviewPause === 'boolean') reviewPause = data.reviewPause;
+    if (typeof data.running === 'boolean') runningAnki = data.running;
+    if (typeof data.runningNormal === 'boolean') runningNormal = data.runningNormal;
+    running = currentPageRunning();
+    if (typeof data.reviewPause === 'boolean') reviewPauseAnki = data.reviewPause;
+    if (typeof data.reviewPauseNormal === 'boolean') reviewPauseNormal = data.reviewPauseNormal;
+    reviewPause = pageMode() === 'normal' ? reviewPauseNormal : reviewPauseAnki;
     if (typeof data.finishTodaysCards === 'boolean') finishTodaysCards = data.finishTodaysCards;
     if (data.perQuizSeconds && typeof data.perQuizSeconds === 'object') perQuizSeconds = data.perQuizSeconds;
     if (typeof data.autoGrade === 'boolean') autoGrade = data.autoGrade;
@@ -1119,6 +1134,19 @@
   }
 
   // ---------- Review pause (after wrong answer) ----------
+
+  // The countdown switch of the page kind that's open.
+  function currentPageRunning() {
+    return pageMode() === 'normal' ? runningNormal : runningAnki;
+  }
+
+  // Point `running` and `reviewPause` at the open page kind's switches (on
+  // entering a page, or moving between the anki and the normal page of a
+  // quiz).
+  function syncPageSwitches() {
+    running = currentPageRunning();
+    reviewPause = pageMode() === 'normal' ? reviewPauseNormal : reviewPauseAnki;
+  }
 
   // Whether an answer that marked a review pauses the quiz: after mistakes,
   // or on a normal page after every answer.
@@ -2355,6 +2383,7 @@
 
   function fullReset(reason) {
     if (DEBUG) console.log('[helloquiz-timer] full reset (' + reason + ')');
+    syncPageSwitches();
     clearTimer();
     hideReviewOverlay();
     endNavPause();
@@ -2400,6 +2429,7 @@
 
   let lastUrl = location.href;
   let scriptActive = !!pageMode(); // may load on any page (SPA); start inactive elsewhere
+  syncPageSwitches();
 
   // How a run starts. In anki mode the first question waits behind "Click
   // to start"; a normal game has the site's own start button for that, so
@@ -2420,6 +2450,7 @@
     if (DEBUG) console.log('[helloquiz-timer] ' + (active ? 'activating' : 'deactivating') + ' on', location.pathname + location.search);
 
     if (active) {
+      syncPageSwitches();
       // Returning to an anki page (or a normal game): start in the waiting state.
       hideQuestion();
       enterStartState('entered anki page');
@@ -3913,6 +3944,10 @@
 
     enabledCheckbox.addEventListener('change', () => {
       running = enabledCheckbox.checked;
+      // Only this page kind's switch: the anki and the normal quiz page
+      // each keep their own.
+      if (pageMode() === 'normal') runningNormal = running;
+      else runningAnki = running;
       saveSettings();
       secInput.disabled = !running;
       // Neither the quiz-specific override nor auto-grading makes sense while
@@ -4093,6 +4128,8 @@
     pauseCheckbox.checked = reviewPause;
     pauseCheckbox.addEventListener('change', () => {
       reviewPause = pauseCheckbox.checked;
+      if (pageMode() === 'normal') reviewPauseNormal = reviewPause;
+      else reviewPauseAnki = reviewPause;
       saveSettings();
       // If the pause is switched off while a review overlay is up, continue
       // immediately instead of leaving the user stuck on it.
