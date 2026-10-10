@@ -7,7 +7,8 @@ grouped by minor version (each including its patch releases).
 ## 1.16.3 — 2026-10-10
 
 - **Paused while the settings are open:** with the ⚙ popover open, the
-  question box (question, hint, score) is hidden and the countdown waits;
+  question shows as *Close the settings to continue* (like *Click to
+  start*), hint and score are hidden, and the countdown waits;
   switching the countdown on there doesn't start it yet. Closing the
   settings shows the question again and continues with the time that was
   left (the full time, for a countdown started meanwhile).

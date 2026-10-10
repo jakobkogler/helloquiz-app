@@ -559,6 +559,10 @@
   // the mirror can keep showing the OLD question (the one that was
   // answered) while the site's real label already contains the next one.
   let mirrorText = 'Click to start';
+  // While the ⚙ settings are open the countdown is held and, during a
+  // question, the mirror shows this note instead (see watchSettingsPause).
+  let settingsPaused = false;
+  const SETTINGS_PAUSE_NOTE = 'Close the settings to continue';
   // Some quizzes ask about a picture: the question <h2> holds an <img> and has
   // no text. When that's the case we mirror the rendered markup instead of a
   // string; mirrorHTML is null for ordinary text questions.
@@ -627,7 +631,12 @@
       if (realH2) contentEl.insertBefore(mirror, realH2);
       else contentEl.insertBefore(mirror, contentEl.firstChild);
     }
-    if (mirrorHTML !== null) {
+    // Settings open during a question: a note in its place, like "Click
+    // to start" (the question itself stays in mirrorText / mirrorHTML).
+    const note = settingsNoteShown() ? SETTINGS_PAUSE_NOTE : null;
+    if (note !== null) {
+      if (mirror.textContent !== note || mirror.firstElementChild) mirror.textContent = note;
+    } else if (mirrorHTML !== null) {
       if (mirror.innerHTML !== mirrorHTML) mirror.innerHTML = mirrorHTML;
     } else if (mirror.textContent !== mirrorText || mirror.firstElementChild) {
       // The firstElementChild check catches leftover markup from an image
@@ -635,7 +644,8 @@
       // text comparison alone would leave the <img> in place.
       mirror.textContent = mirrorText;
     }
-    mirror.classList.toggle(MIRROR_ACTIVE_CLASS, mirrorActive);
+    // Like "Click to start", the note doesn't get the active question's frame.
+    mirror.classList.toggle(MIRROR_ACTIVE_CLASS, mirrorActive && note === null);
     // A normal game's start screen has no question: no empty box either.
     const empty = mirrorHTML === null && mirrorText === '' && pageMode() === 'normal';
     if (mirror.hidden !== empty) mirror.hidden = empty;
@@ -958,10 +968,12 @@
         background: var(--bg, #f0f0ff) !important;
         color: var(--text, #222) !important;
       }
-      /* Settings open (⚙): the question box (question, hint, score) is
-         hidden - its space kept - while the countdown waits, so nothing
-         can be answered ahead of it. */
-      html.${SETTINGS_PAUSE_CLASS} ${QUIZ_CONTENT_SELECTOR} { visibility: hidden !important; }
+      /* Settings open (⚙) during a question: the mirror says to close
+         them (see ensureMirror) and the rest of the question box - hint,
+         score - is hidden, its space kept, while the countdown waits. */
+      html.${SETTINGS_PAUSE_CLASS} ${QUIZ_CONTENT_SELECTOR} > :not(h2.${MIRROR_CLASS}) {
+        visibility: hidden !important;
+      }
       /* The country page (/country/<code>), recognized by the site's own
          "← other countries" line: its filter box, quiz table and pager are
          always hidden - our list replaces them - unless our list says it
@@ -2851,7 +2863,12 @@
     return settingsPopoverOpenFrom(wrapper ? wrapper.className : null, !!gear && gear.classList.contains('selected'));
   }
 
-  let settingsPaused = false; // the open ⚙ popover holds the countdown
+
+  // The note replaces a question only - "Click to start" and a normal
+  // game's empty start screen stay as they are.
+  function settingsNoteShown() {
+    return settingsPaused && !mirrorIsStatus;
+  }
 
   // Runs pre-paint (observer pass) and on the poll: while the settings are
   // open the question is hidden and the countdown held (a change there,
@@ -2859,14 +2876,16 @@
   // closing them shows the question and continues where it stopped.
   function watchSettingsPause() {
     const open = scriptActive && settingsPopoverOpen();
-    document.documentElement.classList.toggle(SETTINGS_PAUSE_CLASS, open);
     if (open && !settingsPaused) {
       pauseTimer();
       settingsPaused = true;
+      ensureMirror();
     } else if (!open && settingsPaused) {
       settingsPaused = false;
+      ensureMirror();
       if (!normalSitePaused && !document.hidden) resumeTimer();
     }
+    document.documentElement.classList.toggle(SETTINGS_PAUSE_CLASS, settingsNoteShown());
   }
 
   function watchNormalSitePause() {
