@@ -1,6 +1,6 @@
 # HelloQuiz Anki Turbo
 
-A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violentmonkey.github.io/) userscript that adds Anki-mode enhancements to [helloquiz.app](https://helloquiz.app): a per-question countdown that auto-fails cards you answer too slowly, a review pause after mistakes, and keyboard shortcuts.
+A [Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violentmonkey.github.io/) userscript that makes studying on [helloquiz.app](https://helloquiz.app) faster, in anki mode and on the normal quiz pages: a per-question countdown that fails cards you answer too slowly, grading by speed, a review pause after mistakes, a smoother way through your due quizzes (open them all at once, go on to the next one, finish today's cards in one go), a card browser, keyboard shortcuts, and — optionally — anki grading from the normal quiz, so playing it also does your reviews.
 
 ## Features
 
