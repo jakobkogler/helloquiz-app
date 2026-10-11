@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HelloQuiz Anki Turbo
 // @namespace    https://github.com/jakobkogler/helloquiz-app
-// @version      1.16.3
+// @version      1.16.4
 // @description  Anki mode enhancements for helloquiz.app: a per-question countdown that auto-fails cards you find too slowly, optional auto-grading of correct answers by how fast they were, a review pause after mistakes (study the map, continue on click), and keyboard shortcuts with visual key hints. Also on the normal quiz pages, where answers can grade the quiz's anki cards.
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
@@ -18,7 +18,7 @@
   const DEBUG = false;
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
-  const SCRIPT_VERSION = '1.16.3';
+  const SCRIPT_VERSION = '1.16.4';
   const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
@@ -335,13 +335,37 @@
     return bar;
   }
 
+  let imageHold = false; // countdown held until the question's picture has loaded
+
   function clearTimer() {
     clearInterval(timerInterval);
     clearTimeout(timeoutHandle);
     timerInterval = null;
     timeoutHandle = null;
     pausedRemaining = null;
+    imageHold = false;
     setMirrorActive(false);
+  }
+
+  // An image question's picture can take a while to arrive; until it's on
+  // screen there is nothing to answer, so the countdown waits for it. A
+  // broken image counts as done (complete, just with no size): it would
+  // never load, and the quiz mustn't stall on it.
+  function imagePending(img) {
+    return !!img && !img.complete;
+  }
+
+  // The picture the player actually sees: the one in our mirror.
+  function mirrorImage() {
+    return document.querySelector('h2.' + MIRROR_CLASS + ' img');
+  }
+
+  // The held countdown starts once the picture is there - from its load or
+  // error event, or from the poll in case React swapped the node meanwhile.
+  // A hidden tab keeps it held; coming back resumes it as usual.
+  function releaseImageHold() {
+    if (!imageHold || document.hidden || imagePending(mirrorImage())) return;
+    resumeTimer();
   }
 
   function resetBarIdle() {
@@ -382,6 +406,20 @@
       setMirrorActive(false);
       return;
     }
+
+    // Picture still loading: hold it the same way, until the picture is there.
+    const img = mirrorImage();
+    if (imagePending(img)) {
+      timerInterval = null;
+      timeoutHandle = null;
+      pausedRemaining = seconds;
+      imageHold = true;
+      setMirrorActive(false);
+      img.addEventListener('load', releaseImageHold, { once: true });
+      img.addEventListener('error', releaseImageHold, { once: true });
+      return;
+    }
+    imageHold = false;
 
     timerDeadline = Date.now() + seconds * 1000;
     setMirrorActive(true);
@@ -5223,6 +5261,7 @@
     watchForNormalEnd();
     watchNormalSitePause();
     watchSettingsPause();
+    releaseImageHold();
     // After the watchers: the hint sync learns from / enforces against the
     // mirror, which the watchers above may just have updated.
     watchDisplayedQuestion();

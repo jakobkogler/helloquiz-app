@@ -4,6 +4,12 @@ All notable changes to the HelloQuiz Anki Turbo userscript, newest first.
 From 1.10.0 on, every version has its own section; older releases are
 grouped by minor version (each including its patch releases).
 
+## 1.16.4 — 2026-10-11
+
+- **Countdown waits for the picture:** on an image question the countdown
+  starts once the picture has loaded, not while it's still on its way; a
+  picture that fails to load doesn't hold it up.
+
 ## 1.16.3 — 2026-10-10
 
 - **Paused while the settings are open:** with the ⚙ popover open, the

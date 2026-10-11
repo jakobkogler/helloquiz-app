@@ -545,6 +545,14 @@ test('siteCountryOrder lists featured quizzes first, each group by title', () =>
   assert.equal(list[0].id, 'p1'); // not in place
 });
 
+test('imagePending holds the countdown only while a picture is still loading', () => {
+  const { imagePending } = load('imagePending');
+  assert.equal(imagePending(null), false); // text question
+  assert.equal(imagePending({ complete: false }), true); // still loading
+  assert.equal(imagePending({ complete: true, naturalWidth: 640 }), false); // loaded
+  assert.equal(imagePending({ complete: true, naturalWidth: 0 }), false); // broken: don't wait forever
+});
+
 test('settingsPopoverOpenFrom reads the compact popover state', () => {
   const { settingsPopoverOpenFrom } = load('settingsPopoverOpenFrom');
   assert.equal(settingsPopoverOpenFrom('quiz-module__HPadfW__settingsSelected', false), true);
