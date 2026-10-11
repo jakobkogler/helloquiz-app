@@ -13,6 +13,8 @@ grouped by minor version (each including its patch releases).
   [GreasyFork](https://greasyfork.org/scripts/599753), and installs update
   from there — existing installs from the GitHub raw URL switch over with
   this update. The update notice's *update* link opens it there as well.
+- **Homepage and issue tracker** in the script's header, so GreasyFork
+  and the userscript managers link to the GitHub repo and its issues.
 
 ## 1.16.3 — 2026-10-10
 

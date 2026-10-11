@@ -6,6 +6,8 @@
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=helloquiz.app
+// @homepageURL  https://github.com/jakobkogler/helloquiz-app
+// @supportURL   https://github.com/jakobkogler/helloquiz-app/issues
 // @updateURL    https://update.greasyfork.org/scripts/599753/HelloQuiz%20Anki%20Turbo.meta.js
 // @downloadURL  https://update.greasyfork.org/scripts/599753/HelloQuiz%20Anki%20Turbo.user.js
 // @grant        none
