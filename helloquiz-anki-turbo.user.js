@@ -6,8 +6,8 @@
 // @author       Jakob Kogler
 // @match        https://helloquiz.app/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=helloquiz.app
-// @updateURL    https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js
-// @downloadURL  https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js
+// @updateURL    https://update.greasyfork.org/scripts/599753/HelloQuiz%20Anki%20Turbo.meta.js
+// @downloadURL  https://update.greasyfork.org/scripts/599753/HelloQuiz%20Anki%20Turbo.user.js
 // @grant        none
 // @run-at       document-start
 // ==/UserScript==
@@ -19,7 +19,11 @@
   // Must match @version above (a test checks); compared against the
   // published script to tell whether an update is available.
   const SCRIPT_VERSION = '1.16.4';
-  const UPDATE_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
+  // Installs update from GreasyFork (@updateURL / @downloadURL above). The
+  // in-page version check reads the GitHub copy instead: GreasyFork doesn't
+  // allow the cross-origin fetch from helloquiz.app, GitHub raw does.
+  const INSTALL_URL = 'https://update.greasyfork.org/scripts/599753/HelloQuiz%20Anki%20Turbo.user.js';
+  const UPDATE_CHECK_URL = 'https://raw.githubusercontent.com/jakobkogler/helloquiz-app/main/helloquiz-anki-turbo.user.js';
   const CHANGELOG_URL = 'https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md';
   // End-of-quiz navigation buttons: the symbol identifying each button in
   // the DOM and the keyboard shortcut bound to it. Single source of truth
@@ -4452,7 +4456,7 @@
     // Record the attempt first, so a failing check doesn't retry every pass
     // (nor in every other tab).
     saveUpdateState(Object.assign(loadUpdateState(), { checkedAt: Date.now() }));
-    fetch(UPDATE_URL + '?t=' + Date.now(), { cache: 'no-store' })
+    fetch(UPDATE_CHECK_URL + '?t=' + Date.now(), { cache: 'no-store' })
       .then((res) => (res.ok ? res.text() : null))
       .then((text) => {
         const latest = parseScriptVersion(text);
@@ -4498,8 +4502,8 @@
     };
     banner.appendChild(document.createTextNode(
       'Anki Turbo ' + state.latest + ' is available (you have ' + SCRIPT_VERSION + ').'));
-    // Opening the raw script makes the userscript manager offer the update.
-    banner.appendChild(link('update', UPDATE_URL));
+    // Opening the script's URL makes the userscript manager offer the update.
+    banner.appendChild(link('update', INSTALL_URL));
     banner.appendChild(link('changelog', CHANGELOG_URL));
     const dismiss = link('dismiss', '#');
     dismiss.removeAttribute('target');

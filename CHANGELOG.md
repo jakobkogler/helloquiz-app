@@ -9,6 +9,10 @@ grouped by minor version (each including its patch releases).
 - **Countdown waits for the picture:** on an image question the countdown
   starts once the picture has loaded, not while it's still on its way; a
   picture that fails to load doesn't hold it up.
+- **Updates from GreasyFork:** the script is now published on
+  [GreasyFork](https://greasyfork.org/scripts/599753), and installs update
+  from there — existing installs from the GitHub raw URL switch over with
+  this update. The update notice's *update* link opens it there as well.
 
 ## 1.16.3 — 2026-10-10
 

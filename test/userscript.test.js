@@ -180,10 +180,15 @@ test('chooseNextQuiz walks on through the order into quizzes due later today', (
   assert.equal(chooseNextQuiz(order, live, 'B').id, 'X');
 });
 
-test('SCRIPT_VERSION and UPDATE_URL match the userscript header', () => {
+test('SCRIPT_VERSION and INSTALL_URL match the userscript header', () => {
   const header = (name) => source.match(new RegExp(`^// @${name}\\s+(\\S+)`, 'm'))[1];
   assert.equal(source.match(/const SCRIPT_VERSION = '([^']+)'/)[1], header('version'));
-  assert.equal(source.match(/const UPDATE_URL = '([^']+)'/)[1], header('updateURL'));
+  assert.equal(source.match(/const INSTALL_URL = '([^']+)'/)[1], header('downloadURL'));
+  // Installs update from GreasyFork; the in-page version check reads GitHub
+  // raw, the one of the two that allows the cross-origin fetch.
+  assert.match(header('updateURL'), /^https:\/\/update\.greasyfork\.org\/scripts\/599753\/.+\.meta\.js$/);
+  assert.match(header('downloadURL'), /^https:\/\/update\.greasyfork\.org\/scripts\/599753\/.+\.user\.js$/);
+  assert.match(source.match(/const UPDATE_CHECK_URL = '([^']+)'/)[1], /^https:\/\/raw\.githubusercontent\.com\//);
 });
 
 test('compareVersions compares numerically, part by part', () => {
