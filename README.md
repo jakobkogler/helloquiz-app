@@ -45,7 +45,7 @@ The quiz's settings panel is extended, so that you can enable/disable and config
 
 ### More features and bug fixes
 
-A few more features and fixes for bugs on the site — all quizzes of a country on one page (the site's search misses quizzes on other pages), opening all due quizzes in tabs, the update notice and more: see [docs/details.md](docs/details.md).
+A few more features and fixes for bugs on the site — all quizzes of a country on one page (the site's search misses quizzes on other pages), opening all due quizzes in tabs, the update notice and more: see [docs/details.md](https://github.com/jakobkogler/helloquiz-app/blob/main/docs/details.md).
 
 ## Installation
 
@@ -85,7 +85,7 @@ The card browser, where you can search a quiz's cards and punish the ones you fo
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
+See [CHANGELOG.md](https://github.com/jakobkogler/helloquiz-app/blob/main/CHANGELOG.md) for what changed in each version.
 
 ## Development
 
